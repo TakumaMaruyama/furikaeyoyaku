@@ -704,7 +704,7 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
         date: z.string().min(1, "日付を選択してください"),
         startTime: z.string().min(1, "開始時刻を入力してください"),
         courseLabel: z.string().min(1, "コース名を入力してください"),
-        classBand: z.enum(["初級", "中級", "上級"]),
+        classBands: z.array(z.enum(["初級", "中級", "上級"])).min(1, "少なくとも1つのクラス帯を選択してください"),
         capacityLimit: z.number().min(0, "0以上の数値を入力してください"),
         capacityCurrent: z.number().min(0, "0以上の数値を入力してください"),
         capacityMakeupAllowed: z.number().min(0, "0以上の数値を入力してください"),
@@ -717,7 +717,7 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
           date: new Date(slot.date).toISOString().split("T")[0],
           startTime: slot.startTime,
           courseLabel: slot.courseLabel,
-          classBand: slot.classBand,
+          classBands: [slot.classBand],
           capacityLimit: slot.capacityLimit,
           capacityCurrent: slot.capacityCurrent,
           capacityMakeupAllowed: slot.capacityMakeupAllowed,
@@ -728,7 +728,7 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
           date: "",
           startTime: "10:00",
           courseLabel: "",
-          classBand: "初級" as const,
+          classBands: [],
           capacityLimit: 10,
           capacityCurrent: 0,
           capacityMakeupAllowed: 2,
@@ -800,22 +800,34 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
 
             <FormField
               control={form.control}
-              name="classBand"
+              name="classBands"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>クラス帯</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger data-testid="select-slot-classband">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="初級">初級</SelectItem>
-                      <SelectItem value="中級">中級</SelectItem>
-                      <SelectItem value="上級">上級</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <FormLabel>クラス帯（複数選択可）</FormLabel>
+                  <div className="space-y-2">
+                    {["初級", "中級", "上級"].map((band) => (
+                      <div key={band} className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id={`band-${band}`}
+                          checked={field.value?.includes(band as any)}
+                          onChange={(e) => {
+                            const currentValue = field.value || [];
+                            if (e.target.checked) {
+                              field.onChange([...currentValue, band]);
+                            } else {
+                              field.onChange(currentValue.filter((v: string) => v !== band));
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-gray-300"
+                          data-testid={`checkbox-band-${band}`}
+                        />
+                        <label htmlFor={`band-${band}`} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                          {band}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
                   <FormMessage />
                 </FormItem>
               )}

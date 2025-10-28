@@ -75,7 +75,7 @@ export const createSlotRequestSchema = z.object({
   date: z.string(),
   startTime: z.string(),
   courseLabel: z.string().min(1, "コース名を入力してください"),
-  classBand: z.enum(["初級", "中級", "上級"]),
+  classBands: z.array(z.enum(["初級", "中級", "上級"])).min(1, "少なくとも1つのクラス帯を選択してください"),
   capacityLimit: z.number().min(0),
   capacityCurrent: z.number().min(0),
   capacityMakeupAllowed: z.number().min(0),

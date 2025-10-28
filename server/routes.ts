@@ -504,22 +504,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
             continue;
           }
           
-          const dateTime = new Date(`${dateStr}T${data.startTime}:00`);
-          const slotId = `${dateStr}_${data.startTime}_${data.classBand === "初級" ? "shokyu" : data.classBand === "中級" ? "chukyu" : "jokyu"}`;
+          // 各クラス帯に対して枠を作成
+          for (const classBand of data.classBands) {
+            const dateTime = new Date(`${dateStr}T${data.startTime}:00`);
+            const slotId = `${dateStr}_${data.startTime}_${classBand === "初級" ? "shokyu" : classBand === "中級" ? "chukyu" : "jokyu"}`;
+            
+            // 既存チェック
+            const existing = await prisma.classSlot.findUnique({ where: { id: slotId } });
+            if (existing) {
+              continue; // スキップして次へ
+            }
+            
+            const slot = await prisma.classSlot.create({
+              data: {
+                id: slotId,
+                date: currentDate,
+                startTime: data.startTime,
+                courseLabel: data.courseLabel,
+                classBand: classBand,
+                capacityLimit: data.capacityLimit,
+                capacityCurrent: data.capacityCurrent,
+                capacityMakeupAllowed: data.capacityMakeupAllowed,
+                capacityMakeupUsed: 0,
+                lessonStartDateTime: dateTime,
+              },
+            });
+            
+            createdSlots.push(slot);
+          }
+        }
+        
+        res.json({ 
+          success: true, 
+          count: createdSlots.length,
+          message: `${createdSlots.length}個の枠を作成しました`,
+          slots: createdSlots 
+        });
+      } else {
+        // 単発作成
+        for (const classBand of data.classBands) {
+          const dateTime = new Date(`${data.date}T${data.startTime}:00`);
+          const slotId = `${data.date}_${data.startTime}_${classBand === "初級" ? "shokyu" : classBand === "中級" ? "chukyu" : "jokyu"}`;
           
-          // 既存チェック
           const existing = await prisma.classSlot.findUnique({ where: { id: slotId } });
           if (existing) {
-            continue; // スキップして次へ
+            continue; // 既存の場合はスキップ
           }
           
           const slot = await prisma.classSlot.create({
             data: {
               id: slotId,
-              date: currentDate,
+              date: new Date(data.date),
               startTime: data.startTime,
               courseLabel: data.courseLabel,
-              classBand: data.classBand,
+              classBand: classBand,
               capacityLimit: data.capacityLimit,
               capacityCurrent: data.capacityCurrent,
               capacityMakeupAllowed: data.capacityMakeupAllowed,
@@ -537,32 +575,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: `${createdSlots.length}個の枠を作成しました`,
           slots: createdSlots 
         });
-      } else {
-        // 単発作成
-        const dateTime = new Date(`${data.date}T${data.startTime}:00`);
-        const slotId = `${data.date}_${data.startTime}_${data.classBand === "初級" ? "shokyu" : data.classBand === "中級" ? "chukyu" : "jokyu"}`;
-        
-        const existing = await prisma.classSlot.findUnique({ where: { id: slotId } });
-        if (existing) {
-          return res.status(400).json({ error: "同じ日時・クラス帯の枠が既に存在します。" });
-        }
-        
-        const slot = await prisma.classSlot.create({
-          data: {
-            id: slotId,
-            date: new Date(data.date),
-            startTime: data.startTime,
-            courseLabel: data.courseLabel,
-            classBand: data.classBand,
-            capacityLimit: data.capacityLimit,
-            capacityCurrent: data.capacityCurrent,
-            capacityMakeupAllowed: data.capacityMakeupAllowed,
-            capacityMakeupUsed: 0,
-            lessonStartDateTime: dateTime,
-          },
-        });
-        
-        res.json(slot);
       }
     } catch (error: any) {
       res.status(400).json({ error: error.message });
