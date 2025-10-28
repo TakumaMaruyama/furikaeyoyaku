@@ -17,9 +17,10 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { CheckCircleIcon, ClockIcon, XCircleIcon } from "lucide-react";
+import { CheckCircleIcon, ClockIcon, XCircleIcon, ListIcon, CalendarIcon } from "lucide-react";
 import { Link } from "wouter";
 import type { HolidayResponse } from "@shared/schema";
+import { Calendar } from "@/components/ui/calendar";
 
 type Request = {
   id: string;
@@ -60,6 +61,8 @@ export default function AdminPage() {
   const [showSlotDialog, setShowSlotDialog] = useState(false);
   const [editingSlotData, setEditingSlotData] = useState<ClassSlot | null>(null);
   const [showHolidayDialog, setShowHolidayDialog] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
 
   const { data: confirmedRequests, isLoading: loadingConfirmed } = useQuery<Request[]>({
     queryKey: ["/api/admin/confirmed"],
@@ -497,17 +500,39 @@ export default function AdminPage() {
                     コース設定と振替可能枠の管理
                   </p>
                 </div>
-                <Button
-                  onClick={() => {
-                    setEditingSlotData(null);
-                    setShowSlotDialog(true);
-                  }}
-                  data-testid="button-create-slot"
-                  size="default"
-                  className="font-semibold"
-                >
-                  新しい枠を作成
-                </Button>
+                <div className="flex gap-2">
+                  <div className="flex border-2 rounded-lg overflow-hidden">
+                    <Button
+                      variant={viewMode === "list" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setViewMode("list")}
+                      className="rounded-none"
+                    >
+                      <ListIcon className="w-4 h-4 mr-2" />
+                      リスト
+                    </Button>
+                    <Button
+                      variant={viewMode === "calendar" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setViewMode("calendar")}
+                      className="rounded-none"
+                    >
+                      <CalendarIcon className="w-4 h-4 mr-2" />
+                      カレンダー
+                    </Button>
+                  </div>
+                  <Button
+                    onClick={() => {
+                      setEditingSlotData(null);
+                      setShowSlotDialog(true);
+                    }}
+                    data-testid="button-create-slot"
+                    size="default"
+                    className="font-semibold"
+                  >
+                    新しい枠を作成
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="p-6 pt-0">
                 {loadingSlots && (
@@ -522,7 +547,131 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                {!loadingSlots && allSlots && allSlots.length > 0 && (
+                {!loadingSlots && allSlots && allSlots.length > 0 && viewMode === "calendar" && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="flex justify-center">
+                      <Calendar
+                        mode="single"
+                        selected={selectedDate}
+                        onSelect={setSelectedDate}
+                        className="rounded-md border"
+                        modifiers={{
+                          hasSlots: allSlots.map(slot => new Date(slot.date)),
+                          holiday: holidays?.map(h => new Date(h.date)) || [],
+                        }}
+                        modifiersStyles={{
+                          hasSlots: { 
+                            fontWeight: 'bold',
+                            backgroundColor: 'hsl(var(--primary) / 0.1)',
+                          },
+                          holiday: {
+                            color: 'hsl(var(--destructive))',
+                            textDecoration: 'line-through',
+                          },
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-4">
+                      {selectedDate && (() => {
+                        const dateStr = selectedDate.toISOString().split('T')[0];
+                        const daySlots = allSlots.filter(slot => 
+                          new Date(slot.date).toISOString().split('T')[0] === dateStr
+                        );
+                        
+                        if (daySlots.length === 0) {
+                          return (
+                            <div className="text-center py-12">
+                              <p className="text-muted-foreground">
+                                {format(selectedDate, "M月d日(E)", { locale: ja })}の枠はありません
+                              </p>
+                            </div>
+                          );
+                        }
+                        
+                        return (
+                          <>
+                            <h3 className="text-lg font-bold">
+                              {format(selectedDate, "yyyy年M月d日(E)", { locale: ja })}
+                            </h3>
+                            <div className="space-y-3">
+                              {daySlots
+                                .sort((a, b) => a.startTime.localeCompare(b.startTime))
+                                .map((slot) => (
+                                  <div
+                                    key={slot.id}
+                                    className="border-2 rounded-lg p-4 hover:bg-muted/30 transition-colors"
+                                    data-testid={`row-slot-${slot.id}`}
+                                  >
+                                    <div className="flex items-start justify-between gap-4">
+                                      <div className="flex-1 space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          <p className="font-semibold text-lg">{slot.startTime}</p>
+                                          <Badge variant="outline">{slot.classBand}</Badge>
+                                        </div>
+                                        <p className="text-sm text-muted-foreground">{slot.courseLabel}</p>
+                                        <div className="grid grid-cols-2 gap-2 text-sm">
+                                          <div>
+                                            <span className="text-muted-foreground">受入枠: </span>
+                                            <span className="font-semibold">{slot.capacityMakeupAllowed}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-muted-foreground">使用済み: </span>
+                                            <span className="font-semibold">{slot.capacityMakeupUsed}</span>
+                                          </div>
+                                        </div>
+                                        <div className="text-sm">
+                                          <span className="text-muted-foreground">残り枠数: </span>
+                                          <span className="text-lg font-bold text-primary">
+                                            {slot.capacityMakeupAllowed - slot.capacityMakeupUsed}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-col gap-2">
+                                        <Button
+                                          onClick={() => {
+                                            setEditingSlotData(slot);
+                                            setShowSlotDialog(true);
+                                          }}
+                                          variant="outline"
+                                          size="sm"
+                                          data-testid={`button-edit-slot-${slot.id}`}
+                                        >
+                                          編集
+                                        </Button>
+                                        <Button
+                                          onClick={async () => {
+                                            const response = await fetch(`/api/admin/slot-requests-count?slotId=${slot.id}`);
+                                            const data = await response.json();
+                                            const requestsCount = data.count || 0;
+                                            
+                                            let message = `${slot.courseLabel}の枠を削除しますか？`;
+                                            if (requestsCount > 0) {
+                                              message = `${slot.courseLabel}の枠を削除しますか？\n\n※この枠には${requestsCount}件の申し込みがあります。削除すると申し込みも全て削除されます。`;
+                                            }
+                                            
+                                            if (confirm(message)) {
+                                              deleteSlotMutation.mutate(slot.id);
+                                            }
+                                          }}
+                                          variant="outline"
+                                          size="sm"
+                                          data-testid={`button-delete-slot-${slot.id}`}
+                                        >
+                                          削除
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {!loadingSlots && allSlots && allSlots.length > 0 && viewMode === "list" && (
                   <div className="space-y-6">
                     {(() => {
                       // 日付でグループ化
