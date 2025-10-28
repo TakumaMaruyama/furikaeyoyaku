@@ -751,6 +751,8 @@ type SlotDialogProps = {
 };
 
 function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
+  const [classBandCapacities, setClassBandCapacities] = useState<Record<string, any>>({});
+
   const form = useForm({
     resolver: zodResolver(
       z.object({
@@ -758,9 +760,6 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
         startTime: z.string().min(1, "開始時刻を入力してください"),
         courseLabel: z.string().min(1, "コース名を入力してください"),
         classBands: z.array(z.enum(["初級", "中級", "上級"])).min(1, "少なくとも1つのクラス帯を選択してください"),
-        capacityLimit: z.number().min(0, "0以上の数値を入力してください"),
-        capacityCurrent: z.number().min(0, "0以上の数値を入力してください"),
-        capacityMakeupAllowed: z.number().min(0, "0以上の数値を入力してください"),
         isRecurring: z.boolean().optional(),
         recurringWeeks: z.number().min(1).max(52).optional(),
       })
@@ -771,9 +770,6 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
           startTime: slot.startTime,
           courseLabel: slot.courseLabel,
           classBands: [slot.classBand],
-          capacityLimit: slot.capacityLimit,
-          capacityCurrent: slot.capacityCurrent,
-          capacityMakeupAllowed: slot.capacityMakeupAllowed,
           isRecurring: false,
           recurringWeeks: 12,
         }
@@ -782,16 +778,46 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
           startTime: "10:00",
           courseLabel: "",
           classBands: [],
-          capacityLimit: 10,
-          capacityCurrent: 0,
-          capacityMakeupAllowed: 2,
           isRecurring: false,
           recurringWeeks: 12,
         },
   });
 
+  // 編集時の初期値設定
+  useState(() => {
+    if (slot) {
+      setClassBandCapacities({
+        [slot.classBand]: {
+          capacityLimit: slot.capacityLimit,
+          capacityCurrent: slot.capacityCurrent,
+          capacityMakeupAllowed: slot.capacityMakeupAllowed,
+        }
+      });
+    }
+  });
+
+  const selectedBands = form.watch("classBands") || [];
+
+  // クラス帯が選択されたときにデフォルト値を設定
+  const handleClassBandChange = (band: string, checked: boolean) => {
+    if (checked && !classBandCapacities[band]) {
+      setClassBandCapacities({
+        ...classBandCapacities,
+        [band]: {
+          capacityLimit: 10,
+          capacityCurrent: 0,
+          capacityMakeupAllowed: 2,
+        }
+      });
+    }
+  };
+
   const handleSubmit = (data: any) => {
-    onSave(data);
+    // クラス帯ごとの設定を含めて送信
+    onSave({
+      ...data,
+      classBandCapacities,
+    });
   };
 
   return (
@@ -868,6 +894,7 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
                             const currentValue = field.value || [];
                             if (e.target.checked) {
                               field.onChange([...currentValue, band]);
+                              handleClassBandChange(band, true);
                             } else {
                               field.onChange(currentValue.filter((v: string) => v !== band));
                             }
@@ -886,62 +913,72 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
               )}
             />
 
-            <div className="grid grid-cols-3 gap-4">
-              <FormField
-                control={form.control}
-                name="capacityLimit"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>定員</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="number"
-                        onChange={(e) => field.onChange(parseInt(e.target.value))}
-                        data-testid="input-slot-capacitylimit"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="capacityCurrent"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>現在の参加者数</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="number"
-                        onChange={(e) => field.onChange(parseInt(e.target.value))}
-                        data-testid="input-slot-capacitycurrent"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="capacityMakeupAllowed"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>振替受入枠数</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="number"
-                        onChange={(e) => field.onChange(parseInt(e.target.value))}
-                        data-testid="input-slot-capacitymakeupallowed"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+            {selectedBands.length > 0 && (
+              <div className="space-y-4 border-t pt-4">
+                <h3 className="font-semibold text-sm">各クラス帯の定員設定</h3>
+                {selectedBands.map((band) => (
+                  <div key={band} className="border rounded-lg p-4 space-y-3">
+                    <h4 className="font-medium text-sm">{band}</h4>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <Label className="text-xs mb-1 block">定員</Label>
+                        <Input
+                          type="number"
+                          value={classBandCapacities[band]?.capacityLimit ?? 10}
+                          onChange={(e) =>
+                            setClassBandCapacities({
+                              ...classBandCapacities,
+                              [band]: {
+                                ...classBandCapacities[band],
+                                capacityLimit: parseInt(e.target.value) || 0,
+                              },
+                            })
+                          }
+                          data-testid={`input-${band}-capacitylimit`}
+                          className="h-9"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs mb-1 block">現在の参加者数</Label>
+                        <Input
+                          type="number"
+                          value={classBandCapacities[band]?.capacityCurrent ?? 0}
+                          onChange={(e) =>
+                            setClassBandCapacities({
+                              ...classBandCapacities,
+                              [band]: {
+                                ...classBandCapacities[band],
+                                capacityCurrent: parseInt(e.target.value) || 0,
+                              },
+                            })
+                          }
+                          data-testid={`input-${band}-capacitycurrent`}
+                          className="h-9"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs mb-1 block">振替受入枠数</Label>
+                        <Input
+                          type="number"
+                          value={classBandCapacities[band]?.capacityMakeupAllowed ?? 2}
+                          onChange={(e) =>
+                            setClassBandCapacities({
+                              ...classBandCapacities,
+                              [band]: {
+                                ...classBandCapacities[band],
+                                capacityMakeupAllowed: parseInt(e.target.value) || 0,
+                              },
+                            })
+                          }
+                          data-testid={`input-${band}-capacitymakeupallowed`}
+                          className="h-9"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {!slot && (
               <div className="border-t pt-4 mt-2">

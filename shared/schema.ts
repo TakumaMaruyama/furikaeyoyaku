@@ -76,9 +76,11 @@ export const createSlotRequestSchema = z.object({
   startTime: z.string(),
   courseLabel: z.string().min(1, "コース名を入力してください"),
   classBands: z.array(z.enum(["初級", "中級", "上級"])).min(1, "少なくとも1つのクラス帯を選択してください"),
-  capacityLimit: z.number().min(0),
-  capacityCurrent: z.number().min(0),
-  capacityMakeupAllowed: z.number().min(0),
+  classBandCapacities: z.record(z.object({
+    capacityLimit: z.number().min(0),
+    capacityCurrent: z.number().min(0),
+    capacityMakeupAllowed: z.number().min(0),
+  })),
   isRecurring: z.boolean().optional(),
   recurringWeeks: z.number().min(1).max(52).optional(),
 });

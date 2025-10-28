@@ -515,6 +515,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
               continue; // スキップして次へ
             }
             
+            // クラス帯ごとの定員設定を取得
+            const bandCapacity = data.classBandCapacities[classBand] || {
+              capacityLimit: 10,
+              capacityCurrent: 0,
+              capacityMakeupAllowed: 2,
+            };
+            
             const slot = await prisma.classSlot.create({
               data: {
                 id: slotId,
@@ -522,9 +529,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 startTime: data.startTime,
                 courseLabel: data.courseLabel,
                 classBand: classBand,
-                capacityLimit: data.capacityLimit,
-                capacityCurrent: data.capacityCurrent,
-                capacityMakeupAllowed: data.capacityMakeupAllowed,
+                capacityLimit: bandCapacity.capacityLimit,
+                capacityCurrent: bandCapacity.capacityCurrent,
+                capacityMakeupAllowed: bandCapacity.capacityMakeupAllowed,
                 capacityMakeupUsed: 0,
                 lessonStartDateTime: dateTime,
               },
@@ -551,6 +558,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             continue; // 既存の場合はスキップ
           }
           
+          // クラス帯ごとの定員設定を取得
+          const bandCapacity = data.classBandCapacities[classBand] || {
+            capacityLimit: 10,
+            capacityCurrent: 0,
+            capacityMakeupAllowed: 2,
+          };
+          
           const slot = await prisma.classSlot.create({
             data: {
               id: slotId,
@@ -558,9 +572,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               startTime: data.startTime,
               courseLabel: data.courseLabel,
               classBand: classBand,
-              capacityLimit: data.capacityLimit,
-              capacityCurrent: data.capacityCurrent,
-              capacityMakeupAllowed: data.capacityMakeupAllowed,
+              capacityLimit: bandCapacity.capacityLimit,
+              capacityCurrent: bandCapacity.capacityCurrent,
+              capacityMakeupAllowed: bandCapacity.capacityMakeupAllowed,
               capacityMakeupUsed: 0,
               lessonStartDateTime: dateTime,
             },
