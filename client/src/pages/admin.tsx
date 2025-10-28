@@ -980,7 +980,7 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl">
             {slot ? "枠を編集" : "新しい枠を作成"}
