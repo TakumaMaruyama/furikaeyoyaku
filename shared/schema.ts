@@ -146,4 +146,6 @@ export type SlotSearchResult = {
   statusText: string;
   remainingSlots: number;
   waitlistCount: number;
+  capacityLimit?: number;
+  capacityCurrent?: number;
 };

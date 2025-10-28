@@ -12,16 +12,19 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
-import { CalendarIcon, UserIcon, CheckCircleIcon, AlertTriangleIcon, ClockIcon } from "lucide-react";
+import { CalendarIcon, UserIcon, CheckCircleIcon, AlertTriangleIcon, ClockIcon, ListIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { WaitlistDialog } from "@/components/waitlist-dialog";
 import { Link } from "wouter";
+import { Calendar } from "@/components/ui/calendar";
 
 export default function ParentPage() {
   const [searchParams, setSearchParams] = useState<SearchSlotsRequest | null>(null);
   const [waitlistSlot, setWaitlistSlot] = useState<SlotSearchResult | null>(null);
   const { toast } = useToast();
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
 
   const form = useForm<any>({
     resolver: zodResolver(searchSlotsRequestSchema),
@@ -41,16 +44,20 @@ export default function ParentPage() {
       return await apiRequest("POST", "/api/search-slots", searchParams) as SlotSearchResult[];
     },
   });
-  
+
   if (error) {
     console.error("検索エラー:", error);
   }
 
   const onSearch = (data: SearchSlotsRequest) => {
     setSearchParams(data);
+    if (data.absentDateISO) {
+      setSelectedDate(new Date(data.absentDateISO));
+    }
+    setViewMode("list"); // Reset to list view on new search
   };
 
-  const handleBook = async (slot: SlotSearchResult) => {
+  const handleBook = async (slotId: string) => {
     if (!searchParams) return;
 
     try {
@@ -58,14 +65,14 @@ export default function ParentPage() {
         childName: searchParams.childName,
         declaredClassBand: searchParams.declaredClassBand,
         absentDateISO: searchParams.absentDateISO,
-        toSlotId: slot.slotId,
+        toSlotId: slotId,
       });
 
       toast({
         title: "予約完了",
         description: result.message || "振替予約が成立しました。",
       });
-      
+
       queryClient.invalidateQueries({ queryKey: ["/api/search-slots"] });
     } catch (error: any) {
       toast({
@@ -201,7 +208,7 @@ export default function ParentPage() {
         {searchParams && (
           <section>
             <h2 className="text-2xl font-semibold mb-6">検索結果</h2>
-            
+
             {isLoading && (
               <div className="flex justify-center items-center py-12">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -219,95 +226,232 @@ export default function ParentPage() {
               </Card>
             )}
 
-            {!isLoading && slots && slots.length > 0 && (
-              <div className="space-y-4">
-                {slots.map((slot) => (
-                  <Card key={slot.slotId} className="border-2 hover-elevate" data-testid={`card-slot-${slot.slotId}`}>
-                    <CardHeader className="p-6 pb-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Badge
-                          className={`${getStatusColor(slot.statusCode)} border-2 px-3 py-1 rounded-full text-sm font-semibold flex items-center gap-1.5`}
-                        >
-                          {getStatusIcon(slot.statusCode)}
-                          {slot.statusCode} {slot.statusText}
-                        </Badge>
+            {slots && slots.length > 0 && (
+              <Card className="border-2">
+                <CardHeader className="p-6 flex-row items-start justify-between gap-4 space-y-0">
+                  <div>
+                    <h2 className="text-2xl font-bold">検索結果</h2>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {slots.length}件の振替可能枠が見つかりました
+                    </p>
+                  </div>
+                  <div className="flex border-2 rounded-lg overflow-hidden">
+                    <Button
+                      variant={viewMode === "list" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setViewMode("list")}
+                      className="rounded-none"
+                    >
+                      <ListIcon className="w-4 h-4 mr-2" />
+                      リスト
+                    </Button>
+                    <Button
+                      variant={viewMode === "calendar" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setViewMode("calendar")}
+                      className="rounded-none"
+                    >
+                      <CalendarIcon className="w-4 h-4 mr-2" />
+                      カレンダー
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6 pt-0">
+                  {viewMode === "calendar" && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <div className="flex justify-center">
+                        <Calendar
+                          mode="single"
+                          selected={selectedDate}
+                          onSelect={setSelectedDate}
+                          className="rounded-md border"
+                          modifiers={{
+                            hasSlots: slots.map(slot => new Date(slot.date)),
+                          }}
+                          modifiersStyles={{
+                            hasSlots: {
+                              fontWeight: 'bold',
+                              backgroundColor: 'hsl(var(--primary) / 0.1)',
+                            },
+                          }}
+                        />
                       </div>
-                      <h3 className="text-xl font-bold" data-testid={`text-courselabel-${slot.slotId}`}>
-                        {slot.courseLabel}
-                      </h3>
-                      <p className="text-base text-muted-foreground font-medium">
-                        {slot.classBand}
-                      </p>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-4">
-                      <div className="flex items-center gap-4 text-base">
-                        <div className="flex items-center gap-2">
-                          <CalendarIcon className="w-5 h-5 text-muted-foreground" />
-                          <span className="font-medium">
-                            {format(new Date(slot.date), "yyyy年M月d日(E)", { locale: ja })}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <ClockIcon className="w-5 h-5 text-muted-foreground" />
-                          <span className="font-medium">{slot.startTime}</span>
-                        </div>
+                      <div className="space-y-4">
+                        {selectedDate && (() => {
+                          const selectedYear = selectedDate.getFullYear();
+                          const selectedMonth = selectedDate.getMonth();
+                          const selectedDay = selectedDate.getDate();
+
+                          const daySlots = slots.filter(slot => {
+                            const slotDate = new Date(slot.date);
+                            return slotDate.getFullYear() === selectedYear &&
+                                   slotDate.getMonth() === selectedMonth &&
+                                   slotDate.getDate() === selectedDay;
+                          });
+
+                          if (daySlots.length === 0) {
+                            return (
+                              <div className="text-center py-12">
+                                <p className="text-muted-foreground">
+                                  {format(selectedDate, "M月d日(E)", { locale: ja })}の枠はありません
+                                </p>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <>
+                              <h3 className="text-lg font-bold">
+                                {format(selectedDate, "yyyy年M月d日(E)", { locale: ja })}
+                              </h3>
+                              <div className="space-y-3">
+                                {daySlots
+                                  .sort((a, b) => a.startTime.localeCompare(b.startTime))
+                                  .map((slot) => (
+                                    <SlotCard
+                                      key={slot.slotId}
+                                      slot={slot}
+                                      onBook={handleBook}
+                                      onWaitlist={setWaitlistSlot}
+                                    />
+                                  ))}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
-                      {slot.statusCode === "×" && (
-                        <p className="text-sm text-muted-foreground mt-2">
-                          現在 {slot.waitlistCount} 名待ち
-                        </p>
-                      )}
-                    </CardContent>
-                    <CardFooter className="p-6 pt-0">
-                      {(slot.statusCode === "〇" || slot.statusCode === "△") && (
-                        <Button
-                          onClick={() => handleBook(slot)}
-                          data-testid={`button-book-${slot.slotId}`}
-                          className="w-full h-12 text-base font-semibold"
-                        >
-                          予約する
-                        </Button>
-                      )}
-                      {slot.statusCode === "×" && (
-                        <Button
-                          variant="outline"
-                          onClick={() => setWaitlistSlot(slot)}
-                          data-testid={`button-waitlist-${slot.slotId}`}
-                          className="w-full h-12 text-base font-semibold border-2"
-                        >
-                          順番待ちで申し込む
-                        </Button>
-                      )}
-                    </CardFooter>
-                  </Card>
-                ))}
-              </div>
+                    </div>
+                  )}
+                  {viewMode === "list" && (
+                    <div className="space-y-4">
+                      {slots.map((slot) => (
+                        <SlotCard
+                          key={slot.slotId}
+                          slot={slot}
+                          onBook={handleBook}
+                          onWaitlist={setWaitlistSlot}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
           </section>
         )}
       </main>
 
+      {waitlistSlot && (
+        <WaitlistDialog
+          slot={waitlistSlot}
+          searchParams={searchParams!}
+          open={!!waitlistSlot}
+          onOpenChange={(open) => !open && setWaitlistSlot(null)}
+        />
+      )}
+
       <Link href="/admin">
         <Button
           data-testid="link-admin"
           className="fixed bottom-6 right-6 h-14 px-6 text-base font-semibold shadow-lg"
+          variant="outline"
         >
           管理画面
         </Button>
       </Link>
-
-      {waitlistSlot && searchParams && (
-        <WaitlistDialog
-          slot={waitlistSlot}
-          searchParams={searchParams}
-          open={!!waitlistSlot}
-          onOpenChange={(open) => !open && setWaitlistSlot(null)}
-          onSuccess={() => {
-            setSearchParams({ ...searchParams });
-            setWaitlistSlot(null);
-          }}
-        />
-      )}
     </div>
+  );
+}
+
+type SlotCardProps = {
+  slot: SlotSearchResult;
+  onBook: (slotId: string) => void;
+  onWaitlist: (slot: SlotSearchResult) => void;
+};
+
+function SlotCard({ slot, onBook, onWaitlist }: SlotCardProps) {
+  return (
+    <Card
+      className="border-2 hover:border-primary/50 transition-all"
+      data-testid={`slot-card-${slot.slotId}`}
+    >
+      <CardHeader className="p-4 pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <CalendarIcon className="w-4 h-4 text-muted-foreground" />
+              <span className="font-semibold text-base">
+                {format(new Date(slot.date), "yyyy年M月d日(E)", { locale: ja })}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-lg font-bold">{slot.startTime}</span>
+              <Badge variant="outline">{slot.classBand}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">{slot.courseLabel}</p>
+          </div>
+          <div className="text-right">
+            <Badge
+              className={
+                slot.statusCode === "〇"
+                  ? "bg-green-500 hover:bg-green-600"
+                  : slot.statusCode === "△"
+                  ? "bg-yellow-500 hover:bg-yellow-600"
+                  : "bg-red-500 hover:bg-red-600"
+              }
+            >
+              {slot.statusCode}
+            </Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-4 pt-0">
+        <div className="bg-muted/50 rounded-lg p-3 mb-3">
+          <p className="text-sm font-medium">{slot.statusText}</p>
+          {slot.waitlistCount > 0 && (
+            <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
+              <ClockIcon className="w-3 h-3" />
+              <span>現在 {slot.waitlistCount} 名待ち</span>
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-sm">
+          <div className="text-center p-2 bg-background rounded border">
+            <p className="text-xs text-muted-foreground mb-1">定員</p>
+            <p className="font-bold">{slot.capacityLimit || '-'}</p>
+          </div>
+          <div className="text-center p-2 bg-background rounded border">
+            <p className="text-xs text-muted-foreground mb-1">参加者</p>
+            <p className="font-bold">{slot.capacityCurrent || '-'}</p>
+          </div>
+          <div className="text-center p-2 bg-background rounded border">
+            <p className="text-xs text-muted-foreground mb-1">残り枠</p>
+            <p className="font-bold text-primary">{slot.remainingSlots}</p>
+          </div>
+        </div>
+      </CardContent>
+      <CardFooter className="p-4 pt-0">
+        {slot.statusCode === "〇" || slot.statusCode === "△" ? (
+          <Button
+            onClick={() => onBook(slot.slotId)}
+            className="w-full h-11"
+            data-testid={`button-book-${slot.slotId}`}
+          >
+            <CheckCircleIcon className="w-4 h-4 mr-2" />
+            この枠で振替予約
+          </Button>
+        ) : (
+          <Button
+            onClick={() => onWaitlist(slot)}
+            variant="outline"
+            className="w-full h-11"
+            data-testid={`button-waitlist-${slot.slotId}`}
+          >
+            <AlertTriangleIcon className="w-4 h-4 mr-2" />
+            キャンセル待ちに登録
+          </Button>
+        )}
+      </CardFooter>
+    </Card>
   );
 }

@@ -16,22 +16,23 @@ import {
 import { sendConfirmationEmail, sendExpiredEmail } from "./email-service";
 import { createId } from "@paralleldrive/cuid2";
 import { startScheduler } from "./scheduler";
+import { format } from "date-fns";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  
+
   app.post("/api/search-slots", async (req, res) => {
     try {
       const data = searchSlotsRequestSchema.parse(req.body);
-      
+
       const settings = await prisma.globalSettings.findUnique({ where: { id: 1 } });
       const makeupWindowDays = settings?.makeupWindowDays || 30;
-      
+
       const absentDate = new Date(data.absentDateISO);
       const startRange = new Date(absentDate);
       startRange.setDate(startRange.getDate() - makeupWindowDays);
       const endRange = new Date(absentDate);
       endRange.setDate(endRange.getDate() + makeupWindowDays);
-      
+
       const slots = await prisma.classSlot.findMany({
         where: {
           classBand: data.declaredClassBand,
@@ -47,12 +48,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lessonStartDateTime: 'asc',
         },
       });
-      
+
       const results = slots.map(slot => {
         const remainingSlots = slot.capacityMakeupAllowed - slot.capacityMakeupUsed;
         let statusCode: "〇" | "△" | "×";
         let statusText: string;
-        
+
         if (remainingSlots >= 2) {
           statusCode = "〇";
           statusText = `振替可能（残り${remainingSlots}枠）`;
@@ -63,10 +64,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           statusCode = "×";
           statusText = `欠席者待ち（現在${slot.waitlistCount}名待ち）`;
         }
-        
+
         return {
           slotId: slot.id,
-          date: slot.date.toISOString(),
+          date: format(slot.date, "yyyy-MM-dd"),
           startTime: slot.startTime,
           courseLabel: slot.courseLabel,
           classBand: slot.classBand,
@@ -74,33 +75,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
           statusText,
           remainingSlots,
           waitlistCount: slot.waitlistCount,
+          capacityLimit: slot.capacityLimit,
+          capacityCurrent: slot.capacityCurrent,
         };
       });
-      
+
       res.json(results);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
-  
+
   app.post("/api/book", async (req, res) => {
     try {
       const data = bookRequestSchema.parse(req.body);
-      
+
       const slot = await prisma.classSlot.findUnique({ where: { id: data.toSlotId } });
       if (!slot) {
         return res.status(404).json({ success: false, message: "指定された枠が見つかりません。" });
       }
-      
+
       if (slot.classBand !== data.declaredClassBand) {
         return res.status(400).json({ success: false, message: "クラス帯が一致しません。" });
       }
-      
+
       const remainingSlots = slot.capacityMakeupAllowed - slot.capacityMakeupUsed;
       if (remainingSlots < 1) {
         return res.status(400).json({ success: false, message: "空きがありません。順番待ちで申し込んでください。" });
       }
-      
+
       await prisma.request.create({
         data: {
           id: createId(),
@@ -115,33 +118,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           toSlotStartDateTime: slot.lessonStartDateTime,
         },
       });
-      
+
       await prisma.classSlot.update({
         where: { id: data.toSlotId },
         data: {
           capacityMakeupUsed: { increment: 1 },
         },
       });
-      
+
       res.json({ success: true, status: "確定", message: "振替予約が成立しました。" });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
-  
+
   app.post("/api/waitlist", async (req, res) => {
     try {
       const data = waitlistRequestSchema.parse(req.body);
-      
+
       const slot = await prisma.classSlot.findUnique({ where: { id: data.toSlotId } });
       if (!slot) {
         return res.status(404).json({ success: false, message: "指定された枠が見つかりません。" });
       }
-      
+
       if (slot.classBand !== data.declaredClassBand) {
         return res.status(400).json({ success: false, message: "クラス帯が一致しません。" });
       }
-      
+
       await prisma.request.create({
         data: {
           id: createId(),
@@ -156,28 +159,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           toSlotStartDateTime: slot.lessonStartDateTime,
         },
       });
-      
+
       await prisma.classSlot.update({
         where: { id: data.toSlotId },
         data: {
           waitlistCount: { increment: 1 },
         },
       });
-      
+
       res.json({ success: true, status: "待ち", message: "順番待ちとして受け付けました。空きが出次第、自動的に確定されます。" });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
-  
+
   async function confirmNextWaiter(slotId: string) {
     while (true) {
       const slot = await prisma.classSlot.findUnique({ where: { id: slotId } });
       if (!slot) return;
-      
+
       const remainingSlots = slot.capacityMakeupAllowed - slot.capacityMakeupUsed;
       if (remainingSlots < 1) return;
-      
+
       const waitingRequests = await prisma.request.findMany({
         where: {
           toSlotId: slotId,
@@ -188,12 +191,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         take: 1,
       });
-      
+
       if (waitingRequests.length === 0) return;
-      
+
       const nextRequest = waitingRequests[0];
       const declineToken = createId();
-      
+
       await prisma.request.update({
         where: { id: nextRequest.id },
         data: {
@@ -201,7 +204,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           declineToken: declineToken,
         },
       });
-      
+
       await prisma.classSlot.update({
         where: { id: slotId },
         data: {
@@ -209,7 +212,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           waitlistCount: { decrement: 1 },
         },
       });
-      
+
       if (nextRequest.contactEmail) {
         try {
           await sendConfirmationEmail(
@@ -227,76 +230,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
   }
-  
+
   app.post("/admin/update-slot-capacity", async (req, res) => {
     try {
       const data = updateSlotCapacityRequestSchema.parse(req.body);
-      
+
       const slot = await prisma.classSlot.findUnique({ where: { id: data.slotId } });
       if (!slot) {
         return res.status(404).json({ error: "指定された枠が見つかりません。" });
       }
-      
+
       const oldRemainingSlots = slot.capacityMakeupAllowed - slot.capacityMakeupUsed;
-      
+
       const updateData: any = {};
       if (data.capacityCurrent !== undefined) updateData.capacityCurrent = data.capacityCurrent;
       if (data.capacityMakeupAllowed !== undefined) updateData.capacityMakeupAllowed = data.capacityMakeupAllowed;
       if (data.capacityMakeupUsed !== undefined) updateData.capacityMakeupUsed = data.capacityMakeupUsed;
-      
+
       await prisma.classSlot.update({
         where: { id: data.slotId },
         data: updateData,
       });
-      
+
       const updatedSlot = await prisma.classSlot.findUnique({ where: { id: data.slotId } });
       if (updatedSlot) {
         const newRemainingSlots = updatedSlot.capacityMakeupAllowed - updatedSlot.capacityMakeupUsed;
-        
+
         if (oldRemainingSlots <= 0 && newRemainingSlots >= 1) {
           await confirmNextWaiter(data.slotId);
         }
       }
-      
+
       res.json({ success: true, message: "枠容量を更新しました。" });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
-  
+
   app.get("/api/wait-decline", async (req, res) => {
     try {
       const token = req.query.token as string;
       if (!token) {
         return res.status(400).send("<h1>無効なリクエストです</h1>");
       }
-      
+
       const request = await prisma.request.findFirst({
         where: { declineToken: token },
       });
-      
+
       if (!request) {
         return res.status(404).send("<h1>リクエストが見つかりません</h1>");
       }
-      
+
       if (request.status !== "確定") {
         return res.status(400).send("<h1>このリクエストは既に処理されています</h1>");
       }
-      
+
       await prisma.request.update({
         where: { id: request.id },
         data: { status: "却下" },
       });
-      
+
       await prisma.classSlot.update({
         where: { id: request.toSlotId },
         data: {
           capacityMakeupUsed: { decrement: 1 },
         },
       });
-      
+
       await confirmNextWaiter(request.toSlotId);
-      
+
       res.send(`
 <!DOCTYPE html>
 <html lang="ja">
@@ -344,36 +347,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).send("<h1>エラーが発生しました</h1>");
     }
   });
-  
+
   app.post("/admin/close-waitlist", async (req, res) => {
     try {
       const data = closeWaitlistRequestSchema.parse(req.body);
-      
+
       const slot = await prisma.classSlot.findUnique({ where: { id: data.slotId } });
       if (!slot) {
         return res.status(404).json({ error: "指定された枠が見つかりません。" });
       }
-      
+
       const oneHourBefore = new Date(slot.lessonStartDateTime);
       oneHourBefore.setHours(oneHourBefore.getHours() - 1);
-      
+
       if (new Date() < oneHourBefore) {
         return res.status(400).json({ error: "まだ開始1時間前ではありません。" });
       }
-      
+
       const waitingRequests = await prisma.request.findMany({
         where: {
           toSlotId: data.slotId,
           status: "待ち",
         },
       });
-      
+
       for (const request of waitingRequests) {
         await prisma.request.update({
           where: { id: request.id },
           data: { status: "期限切れ" },
         });
-        
+
         if (request.contactEmail) {
           try {
             await sendExpiredEmail(
@@ -389,7 +392,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       }
-      
+
       await prisma.classSlot.update({
         where: { id: data.slotId },
         data: {
@@ -397,13 +400,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lastNotifiedRequestId: null,
         },
       });
-      
+
       res.json({ success: true, message: `待ちリストをクローズしました（${waitingRequests.length}件）。` });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
-  
+
   app.get("/api/admin/confirmed", async (req, res) => {
     try {
       const requests = await prisma.request.findMany({
@@ -412,13 +415,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           toSlotStartDateTime: 'asc',
         },
       });
-      
+
       res.json(requests);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
-  
+
   app.get("/api/admin/waiting", async (req, res) => {
     try {
       const waitingRequests = await prisma.request.findMany({
@@ -427,35 +430,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
           toSlotStartDateTime: 'asc',
         },
       });
-      
+
       const slotIds = Array.from(new Set(waitingRequests.map(r => r.toSlotId)));
       const slots = await prisma.classSlot.findMany({
         where: {
           id: { in: slotIds },
         },
       });
-      
+
       const slotMap = new Map(slots.map(s => [s.id, s]));
-      
+
       const grouped: any[] = [];
       for (const slotId of slotIds) {
         const slot = slotMap.get(slotId);
         if (!slot) continue;
-        
+
         const requests = waitingRequests.filter(r => r.toSlotId === slotId);
         requests.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-        
+
         grouped.push({
           slotId,
           slot,
           requests,
         });
       }
-      
+
       grouped.sort((a, b) => 
         a.slot.lessonStartDateTime.getTime() - b.slot.lessonStartDateTime.getTime()
       );
-      
+
       res.json(grouped);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -478,7 +481,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/admin/create-slot", async (req, res) => {
     try {
       const data = createSlotRequestSchema.parse(req.body);
-      
+
       // 休館日を取得
       const holidays = await prisma.holiday.findMany({
         select: { date: true },
@@ -486,42 +489,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const holidayDates = new Set(
         holidays.map(h => h.date.toISOString().split('T')[0])
       );
-      
+
       const createdSlots = [];
-      
+
       if (data.isRecurring && data.recurringWeeks) {
         // 繰り返し作成
         const startDate = new Date(data.date);
-        
+
         for (let week = 0; week < data.recurringWeeks; week++) {
           const currentDate = new Date(startDate);
           currentDate.setDate(startDate.getDate() + (week * 7));
-          
+
           const dateStr = currentDate.toISOString().split('T')[0];
-          
+
           // 休館日をスキップ
           if (holidayDates.has(dateStr)) {
             continue;
           }
-          
+
           // 各クラス帯に対して枠を作成
           for (const classBand of data.classBands) {
             const dateTime = new Date(`${dateStr}T${data.startTime}:00`);
             const slotId = `${dateStr}_${data.startTime}_${classBand === "初級" ? "shokyu" : classBand === "中級" ? "chukyu" : "jokyu"}`;
-            
+
             // 既存チェック
             const existing = await prisma.classSlot.findUnique({ where: { id: slotId } });
             if (existing) {
               continue; // スキップして次へ
             }
-            
+
             // クラス帯ごとの定員設定を取得
             const bandCapacity = data.classBandCapacities[classBand] || {
               capacityLimit: 10,
               capacityCurrent: 0,
               capacityMakeupAllowed: 2,
             };
-            
+
             const slot = await prisma.classSlot.create({
               data: {
                 id: slotId,
@@ -536,11 +539,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 lessonStartDateTime: dateTime,
               },
             });
-            
+
             createdSlots.push(slot);
           }
         }
-        
+
         res.json({ 
           success: true, 
           count: createdSlots.length,
@@ -552,19 +555,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const classBand of data.classBands) {
           const dateTime = new Date(`${data.date}T${data.startTime}:00`);
           const slotId = `${data.date}_${data.startTime}_${classBand === "初級" ? "shokyu" : classBand === "中級" ? "chukyu" : "jokyu"}`;
-          
+
           const existing = await prisma.classSlot.findUnique({ where: { id: slotId } });
           if (existing) {
             continue; // 既存の場合はスキップ
           }
-          
+
           // クラス帯ごとの定員設定を取得
           const bandCapacity = data.classBandCapacities[classBand] || {
             capacityLimit: 10,
             capacityCurrent: 0,
             capacityMakeupAllowed: 2,
           };
-          
+
           const slot = await prisma.classSlot.create({
             data: {
               id: slotId,
@@ -579,10 +582,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               lessonStartDateTime: dateTime,
             },
           });
-          
+
           createdSlots.push(slot);
         }
-        
+
         res.json({ 
           success: true, 
           count: createdSlots.length,
@@ -598,12 +601,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/admin/update-slot", async (req, res) => {
     try {
       const data = updateSlotRequestSchema.parse(req.body);
-      
+
       const existing = await prisma.classSlot.findUnique({ where: { id: data.id } });
       if (!existing) {
         return res.status(404).json({ error: "指定された枠が見つかりません。" });
       }
-      
+
       const updateData: any = {};
       if (data.date) updateData.date = new Date(data.date);
       if (data.startTime) updateData.startTime = data.startTime;
@@ -612,7 +615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (data.capacityLimit !== undefined) updateData.capacityLimit = data.capacityLimit;
       if (data.capacityCurrent !== undefined) updateData.capacityCurrent = data.capacityCurrent;
       if (data.capacityMakeupAllowed !== undefined) updateData.capacityMakeupAllowed = data.capacityMakeupAllowed;
-      
+
       if (data.date && data.startTime) {
         updateData.lessonStartDateTime = new Date(`${data.date}T${data.startTime}:00`);
       } else if (data.date) {
@@ -621,12 +624,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const dateStr = existing.date.toISOString().split('T')[0];
         updateData.lessonStartDateTime = new Date(`${dateStr}T${data.startTime}:00`);
       }
-      
+
       // この日以降すべての同一コースに適用する場合
       if (data.applyToFuture) {
         const currentDate = existing.date;
         const dayOfWeek = currentDate.getDay();
-        
+
         // 同じ曜日、時間、クラス帯の枠を検索
         const futureSlots = await prisma.classSlot.findMany({
           where: {
@@ -638,18 +641,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             },
           },
         });
-        
+
         // 同じ曜日のものだけフィルタ
         const sameDaySlots = futureSlots.filter(slot => 
           slot.date.getDay() === dayOfWeek
         );
-        
+
         // 人数設定のみを一括更新
         const capacityUpdateData: any = {};
         if (data.capacityLimit !== undefined) capacityUpdateData.capacityLimit = data.capacityLimit;
         if (data.capacityCurrent !== undefined) capacityUpdateData.capacityCurrent = data.capacityCurrent;
         if (data.capacityMakeupAllowed !== undefined) capacityUpdateData.capacityMakeupAllowed = data.capacityMakeupAllowed;
-        
+
         if (Object.keys(capacityUpdateData).length > 0) {
           await prisma.classSlot.updateMany({
             where: {
@@ -660,7 +663,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             data: capacityUpdateData,
           });
         }
-        
+
         // その他の更新（日付、時間、コース名など）は単発のみ適用
         const singleUpdateData: any = {};
         if (data.date) singleUpdateData.date = updateData.date;
@@ -668,14 +671,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (data.courseLabel) singleUpdateData.courseLabel = data.courseLabel;
         if (data.classBand) singleUpdateData.classBand = data.classBand;
         if (updateData.lessonStartDateTime) singleUpdateData.lessonStartDateTime = updateData.lessonStartDateTime;
-        
+
         if (Object.keys(singleUpdateData).length > 0) {
           await prisma.classSlot.update({
             where: { id: data.id },
             data: singleUpdateData,
           });
         }
-        
+
         res.json({ 
           success: true, 
           message: `${sameDaySlots.length}件の枠を更新しました`,
@@ -687,7 +690,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           where: { id: data.id },
           data: updateData,
         });
-        
+
         res.json(slot);
       }
     } catch (error: any) {
@@ -701,11 +704,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!slotId) {
         return res.status(400).json({ error: "slotIdが必要です。" });
       }
-      
+
       const count = await prisma.request.count({
         where: { toSlotId: slotId },
       });
-      
+
       res.json({ count });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -715,21 +718,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/admin/delete-slot", async (req, res) => {
     try {
       const { id } = deleteSlotRequestSchema.parse(req.body);
-      
+
       const existing = await prisma.classSlot.findUnique({ where: { id } });
       if (!existing) {
         return res.status(404).json({ error: "指定された枠が見つかりません。" });
       }
-      
+
       // 関連するリクエストも削除
       await prisma.request.deleteMany({
         where: { toSlotId: id },
       });
-      
+
       await prisma.classSlot.delete({
         where: { id },
       });
-      
+
       res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -752,13 +755,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/admin/create-holiday", async (req, res) => {
     try {
       const data = createHolidayRequestSchema.parse(req.body);
-      
+
       const holidayDate = new Date(data.date);
       const existing = await prisma.holiday.findUnique({ where: { date: holidayDate } });
       if (existing) {
         return res.status(400).json({ error: "この日付は既に休館日として登録されています。" });
       }
-      
+
       const holiday = await prisma.holiday.create({
         data: {
           id: createId(),
@@ -766,7 +769,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: data.name,
         },
       });
-      
+
       res.json(holiday);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -776,16 +779,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/admin/delete-holiday", async (req, res) => {
     try {
       const { id } = deleteHolidayRequestSchema.parse(req.body);
-      
+
       const existing = await prisma.holiday.findUnique({ where: { id } });
       if (!existing) {
         return res.status(404).json({ error: "指定された休館日が見つかりません。" });
       }
-      
+
       await prisma.holiday.delete({
         where: { id },
       });
-      
+
       res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -793,7 +796,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
-  
+
   startScheduler();
 
   return httpServer;
