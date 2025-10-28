@@ -10,10 +10,11 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
 import { CalendarIcon, UserIcon, CheckCircleIcon, AlertTriangleIcon, ClockIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { WaitlistDialog } from "@/components/waitlist-dialog";
 
 export default function ParentPage() {
@@ -21,26 +22,40 @@ export default function ParentPage() {
   const [waitlistSlot, setWaitlistSlot] = useState<SlotSearchResult | null>(null);
   const { toast } = useToast();
 
-  const form = useForm<SearchSlotsRequest>({
+  const form = useForm<any>({
     resolver: zodResolver(searchSlotsRequestSchema),
     defaultValues: {
       childName: "",
       declaredClassBand: undefined,
       absentDateISO: "",
     },
+    mode: "onChange",
   });
 
-  const { data: slots, isLoading } = useQuery<SlotSearchResult[]>({
+  const { data: slots, isLoading, error } = useQuery<SlotSearchResult[]>({
     queryKey: ["/api/search-slots", searchParams],
     enabled: !!searchParams,
     queryFn: async () => {
       if (!searchParams) return [];
+      console.log("検索リクエスト送信:", searchParams);
       const response = await apiRequest("POST", "/api/search-slots", searchParams);
+      console.log("検索レスポンス:", response);
       return response as SlotSearchResult[];
     },
   });
+  
+  console.log("slots:", slots);
+  console.log("isLoading:", isLoading);
+  console.log("searchParams:", searchParams);
+  
+  if (error) {
+    console.error("検索エラー:", error);
+  }
 
   const onSearch = (data: SearchSlotsRequest) => {
+    console.log("検索パラメータ:", data);
+    console.log("フォームエラー:", form.formState.errors);
+    console.log("フォーム値:", form.getValues());
     setSearchParams(data);
   };
 
@@ -60,7 +75,7 @@ export default function ParentPage() {
         description: (result as any).message || "振替予約が成立しました。",
       });
       
-      setSearchParams({ ...searchParams });
+      queryClient.invalidateQueries({ queryKey: ["/api/search-slots"] });
     } catch (error: any) {
       toast({
         title: "予約エラー",
@@ -109,81 +124,90 @@ export default function ParentPage() {
           <h2 className="text-2xl font-semibold mb-6">振替枠を検索</h2>
           <Card className="border-2">
             <CardContent className="p-6">
-              <form onSubmit={form.handleSubmit(onSearch)} className="space-y-4">
-                <div>
-                  <Label htmlFor="childName" className="font-semibold mb-2 block">
-                    お子様の名前
-                  </Label>
-                  <div className="relative">
-                    <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-                    <Input
-                      id="childName"
-                      data-testid="input-childname"
-                      {...form.register("childName")}
-                      placeholder="例：山田太郎"
-                      className="h-12 pl-10 border-2"
-                    />
-                  </div>
-                  {form.formState.errors.childName && (
-                    <p className="text-sm text-destructive mt-1">
-                      {form.formState.errors.childName.message}
-                    </p>
-                  )}
-                </div>
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSearch)} className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="childName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="font-semibold">お子様の名前</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                            <Input
+                              {...field}
+                              data-testid="input-childname"
+                              placeholder="例：山田太郎"
+                              className="h-12 pl-10 border-2"
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                <div>
-                  <Label htmlFor="classBand" className="font-semibold mb-2 block">
-                    クラス帯
-                  </Label>
-                  <Select
-                    onValueChange={(value) => form.setValue("declaredClassBand", value as any)}
+                  <FormField
+                    control={form.control}
+                    name="declaredClassBand"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="font-semibold">クラス帯</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-classband" className="h-12 border-2">
+                              <SelectValue placeholder="選択してください" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="初級">初級</SelectItem>
+                            <SelectItem value="中級">中級</SelectItem>
+                            <SelectItem value="上級">上級</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="absentDateISO"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="font-semibold">欠席予定日</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
+                            <Input
+                              {...field}
+                              type="date"
+                              data-testid="input-absentdate"
+                              className="h-12 pl-10 border-2"
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <Button
+                    type="submit"
+                    data-testid="button-search"
+                    className="w-full h-12 text-base font-semibold"
+                    disabled={isLoading}
+                    onClick={() => {
+                      console.log("検索ボタンクリック");
+                      console.log("フォーム値:", form.getValues());
+                      console.log("フォームエラー:", form.formState.errors);
+                    }}
                   >
-                    <SelectTrigger id="classBand" data-testid="select-classband" className="h-12 border-2">
-                      <SelectValue placeholder="選択してください" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="初級">初級</SelectItem>
-                      <SelectItem value="中級">中級</SelectItem>
-                      <SelectItem value="上級">上級</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {form.formState.errors.declaredClassBand && (
-                    <p className="text-sm text-destructive mt-1">
-                      {form.formState.errors.declaredClassBand.message}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <Label htmlFor="absentDate" className="font-semibold mb-2 block">
-                    欠席予定日
-                  </Label>
-                  <div className="relative">
-                    <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
-                    <Input
-                      id="absentDate"
-                      data-testid="input-absentdate"
-                      type="date"
-                      {...form.register("absentDateISO")}
-                      className="h-12 pl-10 border-2"
-                    />
-                  </div>
-                  {form.formState.errors.absentDateISO && (
-                    <p className="text-sm text-destructive mt-1">
-                      {form.formState.errors.absentDateISO.message}
-                    </p>
-                  )}
-                </div>
-
-                <Button
-                  type="submit"
-                  data-testid="button-search"
-                  className="w-full h-12 text-base font-semibold"
-                  disabled={isLoading}
-                >
-                  {isLoading ? "検索中..." : "検索"}
-                </Button>
-              </form>
+                    {isLoading ? "検索中..." : "検索"}
+                  </Button>
+                </form>
+              </Form>
             </CardContent>
           </Card>
         </section>

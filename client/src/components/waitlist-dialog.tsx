@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { SearchSlotsRequest, SlotSearchResult } from "@shared/schema";
 import { MailIcon } from "lucide-react";
 
@@ -65,6 +65,7 @@ export function WaitlistDialog({
         description: (result as any).message || "順番待ちとして受け付けました。",
       });
 
+      queryClient.invalidateQueries({ queryKey: ["/api/search-slots"] });
       form.reset();
       onSuccess();
     } catch (error: any) {
