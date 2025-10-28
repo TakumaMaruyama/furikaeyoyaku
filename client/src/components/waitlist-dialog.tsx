@@ -62,7 +62,7 @@ export function WaitlistDialog({
 
       toast({
         title: "順番待ち登録完了",
-        description: (result as any).message || "順番待ちとして受け付けました。",
+        description: result.message || "順番待ちとして受け付けました。",
       });
 
       queryClient.invalidateQueries({ queryKey: ["/api/search-slots"] });

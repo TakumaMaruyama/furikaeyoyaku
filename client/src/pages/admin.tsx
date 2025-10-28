@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CheckCircleIcon, ClockIcon, XCircleIcon } from "lucide-react";
+import { Link } from "wouter";
 
 type Request = {
   id: string;
@@ -366,6 +367,16 @@ export default function AdminPage() {
           </TabsContent>
         </Tabs>
       </main>
+
+      <Link href="/">
+        <Button
+          data-testid="link-parent"
+          className="fixed bottom-6 right-6 h-14 px-6 text-base font-semibold shadow-lg"
+          variant="outline"
+        >
+          保護者向け画面
+        </Button>
+      </Link>
     </div>
   );
 }

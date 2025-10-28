@@ -16,6 +16,7 @@ import { CalendarIcon, UserIcon, CheckCircleIcon, AlertTriangleIcon, ClockIcon }
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { WaitlistDialog } from "@/components/waitlist-dialog";
+import { Link } from "wouter";
 
 export default function ParentPage() {
   const [searchParams, setSearchParams] = useState<SearchSlotsRequest | null>(null);
@@ -37,25 +38,16 @@ export default function ParentPage() {
     enabled: !!searchParams,
     queryFn: async () => {
       if (!searchParams) return [];
-      console.log("検索リクエスト送信:", searchParams);
       const response = await apiRequest("POST", "/api/search-slots", searchParams);
-      console.log("検索レスポンス:", response);
       return response as SlotSearchResult[];
     },
   });
-  
-  console.log("slots:", slots);
-  console.log("isLoading:", isLoading);
-  console.log("searchParams:", searchParams);
   
   if (error) {
     console.error("検索エラー:", error);
   }
 
   const onSearch = (data: SearchSlotsRequest) => {
-    console.log("検索パラメータ:", data);
-    console.log("フォームエラー:", form.formState.errors);
-    console.log("フォーム値:", form.getValues());
     setSearchParams(data);
   };
 
@@ -72,7 +64,7 @@ export default function ParentPage() {
 
       toast({
         title: "予約完了",
-        description: (result as any).message || "振替予約が成立しました。",
+        description: result.message || "振替予約が成立しました。",
       });
       
       queryClient.invalidateQueries({ queryKey: ["/api/search-slots"] });
@@ -198,11 +190,6 @@ export default function ParentPage() {
                     data-testid="button-search"
                     className="w-full h-12 text-base font-semibold"
                     disabled={isLoading}
-                    onClick={() => {
-                      console.log("検索ボタンクリック");
-                      console.log("フォーム値:", form.getValues());
-                      console.log("フォームエラー:", form.formState.errors);
-                    }}
                   >
                     {isLoading ? "検索中..." : "検索"}
                   </Button>
@@ -300,6 +287,15 @@ export default function ParentPage() {
           </section>
         )}
       </main>
+
+      <Link href="/admin">
+        <Button
+          data-testid="link-admin"
+          className="fixed bottom-6 right-6 h-14 px-6 text-base font-semibold shadow-lg"
+        >
+          管理画面
+        </Button>
+      </Link>
 
       {waitlistSlot && searchParams && (
         <WaitlistDialog
