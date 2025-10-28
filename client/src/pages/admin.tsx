@@ -2,6 +2,9 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ja } from "date-fns/locale";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,6 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CheckCircleIcon, ClockIcon, XCircleIcon } from "lucide-react";
@@ -32,9 +38,11 @@ type ClassSlot = {
   startTime: string;
   courseLabel: string;
   classBand: string;
+  capacityLimit: number;
+  capacityCurrent: number;
   capacityMakeupAllowed: number;
   capacityMakeupUsed: number;
-  waitlistCount: number;
+  waitlistCount?: number;
   lessonStartDateTime: string;
 };
 
@@ -48,6 +56,8 @@ export default function AdminPage() {
   const { toast } = useToast();
   const [editingSlot, setEditingSlot] = useState<string | null>(null);
   const [capacityValues, setCapacityValues] = useState<Record<string, any>>({});
+  const [showSlotDialog, setShowSlotDialog] = useState(false);
+  const [editingSlotData, setEditingSlotData] = useState<ClassSlot | null>(null);
 
   const { data: confirmedRequests, isLoading: loadingConfirmed } = useQuery<Request[]>({
     queryKey: ["/api/admin/confirmed"],
@@ -55,6 +65,10 @@ export default function AdminPage() {
 
   const { data: waitingData, isLoading: loadingWaiting } = useQuery<WaitingRequest[]>({
     queryKey: ["/api/admin/waiting"],
+  });
+
+  const { data: allSlots, isLoading: loadingSlots } = useQuery<ClassSlot[]>({
+    queryKey: ["/api/admin/slots"],
   });
 
   const updateCapacityMutation = useMutation({
@@ -90,6 +104,64 @@ export default function AdminPage() {
       toast({
         title: "クローズエラー",
         description: error.message || "クローズに失敗しました。",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createSlotMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/admin/create-slot", data),
+    onSuccess: () => {
+      toast({
+        title: "作成完了",
+        description: "新しい枠を作成しました。",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/slots"] });
+      setShowSlotDialog(false);
+      setEditingSlotData(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "作成エラー",
+        description: error.message || "作成に失敗しました。",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateSlotMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("PUT", "/api/admin/update-slot", data),
+    onSuccess: () => {
+      toast({
+        title: "更新完了",
+        description: "枠を更新しました。",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/slots"] });
+      setShowSlotDialog(false);
+      setEditingSlotData(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "更新エラー",
+        description: error.message || "更新に失敗しました。",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteSlotMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", "/api/admin/delete-slot", { id }),
+    onSuccess: () => {
+      toast({
+        title: "削除完了",
+        description: "枠を削除しました。",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/slots"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "削除エラー",
+        description: error.message || "削除に失敗しました。",
         variant: "destructive",
       });
     },
@@ -132,12 +204,15 @@ export default function AdminPage() {
 
       <main className="container px-4 py-8 md:py-12">
         <Tabs defaultValue="confirmed" className="w-full">
-          <TabsList className="grid w-full max-w-md grid-cols-2 h-12">
+          <TabsList className="grid w-full max-w-3xl grid-cols-3 h-12">
             <TabsTrigger value="confirmed" data-testid="tab-confirmed" className="text-base">
               確定一覧
             </TabsTrigger>
             <TabsTrigger value="waiting" data-testid="tab-waiting" className="text-base">
               待ち一覧
+            </TabsTrigger>
+            <TabsTrigger value="slots" data-testid="tab-slots" className="text-base">
+              枠管理
             </TabsTrigger>
           </TabsList>
 
@@ -365,8 +440,124 @@ export default function AdminPage() {
               </div>
             )}
           </TabsContent>
+
+          <TabsContent value="slots" className="mt-6">
+            <Card className="border-2">
+              <CardHeader className="p-6 flex-row items-center justify-between gap-4 space-y-0">
+                <div>
+                  <CardTitle className="text-xl">振替枠管理</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    コース設定と振替可能枠の管理
+                  </p>
+                </div>
+                <Button
+                  onClick={() => {
+                    setEditingSlotData(null);
+                    setShowSlotDialog(true);
+                  }}
+                  data-testid="button-create-slot"
+                  size="default"
+                  className="font-semibold"
+                >
+                  新しい枠を作成
+                </Button>
+              </CardHeader>
+              <CardContent className="p-6 pt-0">
+                {loadingSlots && (
+                  <div className="flex justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                )}
+
+                {!loadingSlots && allSlots && allSlots.length === 0 && (
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">まだ枠が作成されていません</p>
+                  </div>
+                )}
+
+                {!loadingSlots && allSlots && allSlots.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="font-semibold">コース名</TableHead>
+                          <TableHead className="font-semibold">クラス</TableHead>
+                          <TableHead className="font-semibold">日時</TableHead>
+                          <TableHead className="font-semibold">受入枠数</TableHead>
+                          <TableHead className="font-semibold">使用済み</TableHead>
+                          <TableHead className="font-semibold">残り</TableHead>
+                          <TableHead className="font-semibold">操作</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {allSlots.map((slot) => (
+                          <TableRow key={slot.id} data-testid={`row-slot-${slot.id}`}>
+                            <TableCell className="font-medium">{slot.courseLabel}</TableCell>
+                            <TableCell>{slot.classBand}</TableCell>
+                            <TableCell>
+                              {format(new Date(slot.lessonStartDateTime), "yyyy/M/d(E) HH:mm", { locale: ja })}
+                            </TableCell>
+                            <TableCell>{slot.capacityMakeupAllowed}</TableCell>
+                            <TableCell>{slot.capacityMakeupUsed}</TableCell>
+                            <TableCell className="font-semibold">
+                              {slot.capacityMakeupAllowed - slot.capacityMakeupUsed}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button
+                                  onClick={() => {
+                                    setEditingSlotData(slot);
+                                    setShowSlotDialog(true);
+                                  }}
+                                  variant="outline"
+                                  size="sm"
+                                  data-testid={`button-edit-slot-${slot.id}`}
+                                >
+                                  編集
+                                </Button>
+                                <Button
+                                  onClick={() => {
+                                    if (confirm(`${slot.courseLabel}の枠を削除しますか？`)) {
+                                      deleteSlotMutation.mutate(slot.id);
+                                    }
+                                  }}
+                                  variant="outline"
+                                  size="sm"
+                                  data-testid={`button-delete-slot-${slot.id}`}
+                                >
+                                  削除
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </main>
+
+      {showSlotDialog && (
+        <SlotDialog
+          slot={editingSlotData}
+          open={showSlotDialog}
+          onOpenChange={(open) => {
+            setShowSlotDialog(open);
+            if (!open) setEditingSlotData(null);
+          }}
+          onSave={(data) => {
+            if (editingSlotData) {
+              updateSlotMutation.mutate({ ...data, id: editingSlotData.id });
+            } else {
+              createSlotMutation.mutate(data);
+            }
+          }}
+        />
+      )}
 
       <Link href="/">
         <Button
@@ -378,5 +569,207 @@ export default function AdminPage() {
         </Button>
       </Link>
     </div>
+  );
+}
+
+type SlotDialogProps = {
+  slot: ClassSlot | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (data: any) => void;
+};
+
+function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
+  const form = useForm({
+    resolver: zodResolver(
+      z.object({
+        date: z.string().min(1, "日付を選択してください"),
+        startTime: z.string().min(1, "開始時刻を入力してください"),
+        courseLabel: z.string().min(1, "コース名を入力してください"),
+        classBand: z.enum(["初級", "中級", "上級"]),
+        capacityLimit: z.number().min(0, "0以上の数値を入力してください"),
+        capacityCurrent: z.number().min(0, "0以上の数値を入力してください"),
+        capacityMakeupAllowed: z.number().min(0, "0以上の数値を入力してください"),
+      })
+    ),
+    defaultValues: slot
+      ? {
+          date: new Date(slot.date).toISOString().split("T")[0],
+          startTime: slot.startTime,
+          courseLabel: slot.courseLabel,
+          classBand: slot.classBand,
+          capacityLimit: slot.capacityLimit,
+          capacityCurrent: slot.capacityCurrent,
+          capacityMakeupAllowed: slot.capacityMakeupAllowed,
+        }
+      : {
+          date: "",
+          startTime: "10:00",
+          courseLabel: "",
+          classBand: "初級" as const,
+          capacityLimit: 10,
+          capacityCurrent: 0,
+          capacityMakeupAllowed: 2,
+        },
+  });
+
+  const handleSubmit = (data: any) => {
+    onSave(data);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl">
+            {slot ? "枠を編集" : "新しい枠を作成"}
+          </DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="date"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>日付</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="date" data-testid="input-slot-date" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="startTime"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>開始時刻</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="time" data-testid="input-slot-time" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name="courseLabel"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>コース名</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder="例：月曜10時コース"
+                      data-testid="input-slot-courselabel"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="classBand"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>クラス帯</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-slot-classband">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="初級">初級</SelectItem>
+                      <SelectItem value="中級">中級</SelectItem>
+                      <SelectItem value="上級">上級</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="grid grid-cols-3 gap-4">
+              <FormField
+                control={form.control}
+                name="capacityLimit"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>定員</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type="number"
+                        onChange={(e) => field.onChange(parseInt(e.target.value))}
+                        data-testid="input-slot-capacitylimit"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="capacityCurrent"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>現在の参加者数</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type="number"
+                        onChange={(e) => field.onChange(parseInt(e.target.value))}
+                        data-testid="input-slot-capacitycurrent"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="capacityMakeupAllowed"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>振替受入枠数</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type="number"
+                        onChange={(e) => field.onChange(parseInt(e.target.value))}
+                        data-testid="input-slot-capacitymakeupallowed"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                data-testid="button-cancel-slot"
+              >
+                キャンセル
+              </Button>
+              <Button type="submit" data-testid="button-save-slot">
+                {slot ? "更新" : "作成"}
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -38,8 +38,7 @@ export default function ParentPage() {
     enabled: !!searchParams,
     queryFn: async () => {
       if (!searchParams) return [];
-      const response = await apiRequest("POST", "/api/search-slots", searchParams);
-      return response as SlotSearchResult[];
+      return await apiRequest("POST", "/api/search-slots", searchParams) as SlotSearchResult[];
     },
   });
   

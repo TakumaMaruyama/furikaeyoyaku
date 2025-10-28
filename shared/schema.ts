@@ -71,6 +71,31 @@ export const closeWaitlistRequestSchema = z.object({
   slotId: z.string(),
 });
 
+export const createSlotRequestSchema = z.object({
+  date: z.string(),
+  startTime: z.string(),
+  courseLabel: z.string().min(1, "コース名を入力してください"),
+  classBand: z.enum(["初級", "中級", "上級"]),
+  capacityLimit: z.number().min(0),
+  capacityCurrent: z.number().min(0),
+  capacityMakeupAllowed: z.number().min(0),
+});
+
+export const updateSlotRequestSchema = z.object({
+  id: z.string(),
+  date: z.string().optional(),
+  startTime: z.string().optional(),
+  courseLabel: z.string().optional(),
+  classBand: z.enum(["初級", "中級", "上級"]).optional(),
+  capacityLimit: z.number().optional(),
+  capacityCurrent: z.number().optional(),
+  capacityMakeupAllowed: z.number().optional(),
+});
+
+export const deleteSlotRequestSchema = z.object({
+  id: z.string(),
+});
+
 export type GlobalSettings = z.infer<typeof globalSettingsSchema>;
 export type ClassSlot = z.infer<typeof classSlotSchema>;
 export type Request = z.infer<typeof requestSchema>;
@@ -79,6 +104,9 @@ export type BookRequest = z.infer<typeof bookRequestSchema>;
 export type WaitlistRequest = z.infer<typeof waitlistRequestSchema>;
 export type UpdateSlotCapacityRequest = z.infer<typeof updateSlotCapacityRequestSchema>;
 export type CloseWaitlistRequest = z.infer<typeof closeWaitlistRequestSchema>;
+export type CreateSlotRequest = z.infer<typeof createSlotRequestSchema>;
+export type UpdateSlotRequest = z.infer<typeof updateSlotRequestSchema>;
+export type DeleteSlotRequest = z.infer<typeof deleteSlotRequestSchema>;
 
 export type SlotSearchResult = {
   slotId: string;

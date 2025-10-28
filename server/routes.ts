@@ -1,7 +1,16 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { prisma } from "./db";
-import { searchSlotsRequestSchema, bookRequestSchema, waitlistRequestSchema, updateSlotCapacityRequestSchema, closeWaitlistRequestSchema } from "@shared/schema";
+import { 
+  searchSlotsRequestSchema, 
+  bookRequestSchema, 
+  waitlistRequestSchema, 
+  updateSlotCapacityRequestSchema, 
+  closeWaitlistRequestSchema,
+  createSlotRequestSchema,
+  updateSlotRequestSchema,
+  deleteSlotRequestSchema
+} from "@shared/schema";
 import { sendConfirmationEmail, sendExpiredEmail } from "./email-service";
 import { createId } from "@paralleldrive/cuid2";
 import { startScheduler } from "./scheduler";
@@ -448,6 +457,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(grouped);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/admin/slots", async (req, res) => {
+    try {
+      const slots = await prisma.classSlot.findMany({
+        orderBy: {
+          lessonStartDateTime: 'asc',
+        },
+      });
+      res.json(slots);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/create-slot", async (req, res) => {
+    try {
+      const data = createSlotRequestSchema.parse(req.body);
+      
+      const dateTime = new Date(`${data.date}T${data.startTime}:00`);
+      const slotId = `${data.date}_${data.startTime}_${data.classBand === "初級" ? "shokyu" : data.classBand === "中級" ? "chukyu" : "jokyu"}`;
+      
+      const existing = await prisma.classSlot.findUnique({ where: { id: slotId } });
+      if (existing) {
+        return res.status(400).json({ error: "同じ日時・クラス帯の枠が既に存在します。" });
+      }
+      
+      const slot = await prisma.classSlot.create({
+        data: {
+          id: slotId,
+          date: new Date(data.date),
+          startTime: data.startTime,
+          courseLabel: data.courseLabel,
+          classBand: data.classBand,
+          capacityLimit: data.capacityLimit,
+          capacityCurrent: data.capacityCurrent,
+          capacityMakeupAllowed: data.capacityMakeupAllowed,
+          capacityMakeupUsed: 0,
+          lessonStartDateTime: dateTime,
+        },
+      });
+      
+      res.json(slot);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/update-slot", async (req, res) => {
+    try {
+      const data = updateSlotRequestSchema.parse(req.body);
+      
+      const existing = await prisma.classSlot.findUnique({ where: { id: data.id } });
+      if (!existing) {
+        return res.status(404).json({ error: "指定された枠が見つかりません。" });
+      }
+      
+      const updateData: any = {};
+      if (data.date) updateData.date = new Date(data.date);
+      if (data.startTime) updateData.startTime = data.startTime;
+      if (data.courseLabel) updateData.courseLabel = data.courseLabel;
+      if (data.classBand) updateData.classBand = data.classBand;
+      if (data.capacityLimit !== undefined) updateData.capacityLimit = data.capacityLimit;
+      if (data.capacityCurrent !== undefined) updateData.capacityCurrent = data.capacityCurrent;
+      if (data.capacityMakeupAllowed !== undefined) updateData.capacityMakeupAllowed = data.capacityMakeupAllowed;
+      
+      if (data.date && data.startTime) {
+        updateData.lessonStartDateTime = new Date(`${data.date}T${data.startTime}:00`);
+      } else if (data.date) {
+        updateData.lessonStartDateTime = new Date(`${data.date}T${existing.startTime}:00`);
+      } else if (data.startTime) {
+        const dateStr = existing.date.toISOString().split('T')[0];
+        updateData.lessonStartDateTime = new Date(`${dateStr}T${data.startTime}:00`);
+      }
+      
+      const slot = await prisma.classSlot.update({
+        where: { id: data.id },
+        data: updateData,
+      });
+      
+      res.json(slot);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/admin/delete-slot", async (req, res) => {
+    try {
+      const { id } = deleteSlotRequestSchema.parse(req.body);
+      
+      const existing = await prisma.classSlot.findUnique({ where: { id } });
+      if (!existing) {
+        return res.status(404).json({ error: "指定された枠が見つかりません。" });
+      }
+      
+      const requestsCount = await prisma.request.count({
+        where: { toSlotId: id },
+      });
+      
+      if (requestsCount > 0) {
+        return res.status(400).json({ error: "この枠には申込みがあるため削除できません。" });
+      }
+      
+      await prisma.classSlot.delete({
+        where: { id },
+      });
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
     }
   });
 
