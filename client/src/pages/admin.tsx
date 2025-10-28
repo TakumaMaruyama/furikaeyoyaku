@@ -762,6 +762,7 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
         classBands: z.array(z.enum(["初級", "中級", "上級"])).min(1, "少なくとも1つのクラス帯を選択してください"),
         isRecurring: z.boolean().optional(),
         recurringWeeks: z.number().min(1).max(52).optional(),
+        applyToFuture: z.boolean().optional(),
       })
     ),
     defaultValues: slot
@@ -772,6 +773,7 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
           classBands: [slot.classBand],
           isRecurring: false,
           recurringWeeks: 12,
+          applyToFuture: false,
         }
       : {
           date: "",
@@ -780,6 +782,7 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
           classBands: [],
           isRecurring: false,
           recurringWeeks: 12,
+          applyToFuture: false,
         },
   });
 
@@ -1033,6 +1036,36 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
                     )}
                   />
                 )}
+              </div>
+            )}
+
+            {slot && (
+              <div className="border-t pt-4 mt-2">
+                <FormField
+                  control={form.control}
+                  name="applyToFuture"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                      <FormControl>
+                        <input
+                          type="checkbox"
+                          checked={field.value}
+                          onChange={field.onChange}
+                          className="mt-1"
+                          data-testid="checkbox-apply-to-future"
+                        />
+                      </FormControl>
+                      <div className="space-y-1 leading-none">
+                        <FormLabel className="font-semibold">
+                          この日以降すべての同一コースに適用
+                        </FormLabel>
+                        <p className="text-sm text-muted-foreground">
+                          同じ曜日・時間・クラス帯のコースすべてに人数設定を適用します
+                        </p>
+                      </div>
+                    </FormItem>
+                  )}
+                />
               </div>
             )}
 

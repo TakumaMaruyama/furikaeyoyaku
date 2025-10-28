@@ -622,12 +622,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.lessonStartDateTime = new Date(`${dateStr}T${data.startTime}:00`);
       }
       
-      const slot = await prisma.classSlot.update({
-        where: { id: data.id },
-        data: updateData,
-      });
-      
-      res.json(slot);
+      // この日以降すべての同一コースに適用する場合
+      if (data.applyToFuture) {
+        const currentDate = existing.date;
+        const dayOfWeek = currentDate.getDay();
+        
+        // 同じ曜日、時間、クラス帯の枠を検索
+        const futureSlots = await prisma.classSlot.findMany({
+          where: {
+            startTime: existing.startTime,
+            classBand: existing.classBand,
+            courseLabel: existing.courseLabel,
+            date: {
+              gte: currentDate,
+            },
+          },
+        });
+        
+        // 同じ曜日のものだけフィルタ
+        const sameDaySlots = futureSlots.filter(slot => 
+          slot.date.getDay() === dayOfWeek
+        );
+        
+        // 人数設定のみを一括更新
+        const capacityUpdateData: any = {};
+        if (data.capacityLimit !== undefined) capacityUpdateData.capacityLimit = data.capacityLimit;
+        if (data.capacityCurrent !== undefined) capacityUpdateData.capacityCurrent = data.capacityCurrent;
+        if (data.capacityMakeupAllowed !== undefined) capacityUpdateData.capacityMakeupAllowed = data.capacityMakeupAllowed;
+        
+        if (Object.keys(capacityUpdateData).length > 0) {
+          await prisma.classSlot.updateMany({
+            where: {
+              id: {
+                in: sameDaySlots.map(s => s.id),
+              },
+            },
+            data: capacityUpdateData,
+          });
+        }
+        
+        // その他の更新（日付、時間、コース名など）は単発のみ適用
+        const singleUpdateData: any = {};
+        if (data.date) singleUpdateData.date = updateData.date;
+        if (data.startTime) singleUpdateData.startTime = data.startTime;
+        if (data.courseLabel) singleUpdateData.courseLabel = data.courseLabel;
+        if (data.classBand) singleUpdateData.classBand = data.classBand;
+        if (updateData.lessonStartDateTime) singleUpdateData.lessonStartDateTime = updateData.lessonStartDateTime;
+        
+        if (Object.keys(singleUpdateData).length > 0) {
+          await prisma.classSlot.update({
+            where: { id: data.id },
+            data: singleUpdateData,
+          });
+        }
+        
+        res.json({ 
+          success: true, 
+          message: `${sameDaySlots.length}件の枠を更新しました`,
+          count: sameDaySlots.length 
+        });
+      } else {
+        // 単発更新
+        const slot = await prisma.classSlot.update({
+          where: { id: data.id },
+          data: updateData,
+        });
+        
+        res.json(slot);
+      }
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

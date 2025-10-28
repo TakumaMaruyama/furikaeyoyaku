@@ -94,6 +94,7 @@ export const updateSlotRequestSchema = z.object({
   capacityLimit: z.number().optional(),
   capacityCurrent: z.number().optional(),
   capacityMakeupAllowed: z.number().optional(),
+  applyToFuture: z.boolean().optional(),
 });
 
 export const deleteSlotRequestSchema = z.object({
