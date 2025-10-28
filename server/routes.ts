@@ -619,6 +619,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/admin/slot-requests-count", async (req, res) => {
+    try {
+      const slotId = req.query.slotId as string;
+      if (!slotId) {
+        return res.status(400).json({ error: "slotIdが必要です。" });
+      }
+      
+      const count = await prisma.request.count({
+        where: { toSlotId: slotId },
+      });
+      
+      res.json({ count });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.delete("/api/admin/delete-slot", async (req, res) => {
     try {
       const { id } = deleteSlotRequestSchema.parse(req.body);
@@ -628,13 +645,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "指定された枠が見つかりません。" });
       }
       
-      const requestsCount = await prisma.request.count({
+      // 関連するリクエストも削除
+      await prisma.request.deleteMany({
         where: { toSlotId: id },
       });
-      
-      if (requestsCount > 0) {
-        return res.status(400).json({ error: "この枠には申込みがあるため削除できません。" });
-      }
       
       await prisma.classSlot.delete({
         where: { id },

@@ -603,8 +603,18 @@ export default function AdminPage() {
                                           編集
                                         </Button>
                                         <Button
-                                          onClick={() => {
-                                            if (confirm(`${slot.courseLabel}の枠を削除しますか？`)) {
+                                          onClick={async () => {
+                                            // 申し込み件数を確認
+                                            const response = await fetch(`/api/admin/slot-requests-count?slotId=${slot.id}`);
+                                            const data = await response.json();
+                                            const requestsCount = data.count || 0;
+                                            
+                                            let message = `${slot.courseLabel}の枠を削除しますか？`;
+                                            if (requestsCount > 0) {
+                                              message = `${slot.courseLabel}の枠を削除しますか？\n\n※この枠には${requestsCount}件の申し込みがあります。削除すると申し込みも全て削除されます。`;
+                                            }
+                                            
+                                            if (confirm(message)) {
                                               deleteSlotMutation.mutate(slot.id);
                                             }
                                           }}
