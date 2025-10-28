@@ -96,7 +96,28 @@ export const deleteSlotRequestSchema = z.object({
   id: z.string(),
 });
 
+export const holidaySchema = z.object({
+  id: z.string(),
+  date: z.date(),
+  name: z.string(),
+  createdAt: z.date(),
+});
+
+export const createHolidayRequestSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "正しい日付形式（YYYY-MM-DD）で入力してください"),
+  name: z.string().min(1, "休館日名を入力してください"),
+});
+
+export const deleteHolidayRequestSchema = z.object({
+  id: z.string(),
+});
+
 export type GlobalSettings = z.infer<typeof globalSettingsSchema>;
+export type Holiday = z.infer<typeof holidaySchema>;
+export type HolidayResponse = Omit<Holiday, 'date' | 'createdAt'> & { 
+  date: string; 
+  createdAt: string; 
+};
 export type ClassSlot = z.infer<typeof classSlotSchema>;
 export type Request = z.infer<typeof requestSchema>;
 export type SearchSlotsRequest = z.infer<typeof searchSlotsRequestSchema>;
@@ -107,6 +128,8 @@ export type CloseWaitlistRequest = z.infer<typeof closeWaitlistRequestSchema>;
 export type CreateSlotRequest = z.infer<typeof createSlotRequestSchema>;
 export type UpdateSlotRequest = z.infer<typeof updateSlotRequestSchema>;
 export type DeleteSlotRequest = z.infer<typeof deleteSlotRequestSchema>;
+export type CreateHolidayRequest = z.infer<typeof createHolidayRequestSchema>;
+export type DeleteHolidayRequest = z.infer<typeof deleteHolidayRequestSchema>;
 
 export type SlotSearchResult = {
   slotId: string;

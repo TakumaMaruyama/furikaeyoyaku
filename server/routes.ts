@@ -9,7 +9,9 @@ import {
   closeWaitlistRequestSchema,
   createSlotRequestSchema,
   updateSlotRequestSchema,
-  deleteSlotRequestSchema
+  deleteSlotRequestSchema,
+  createHolidayRequestSchema,
+  deleteHolidayRequestSchema
 } from "@shared/schema";
 import { sendConfirmationEmail, sendExpiredEmail } from "./email-service";
 import { createId } from "@paralleldrive/cuid2";
@@ -562,6 +564,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       await prisma.classSlot.delete({
+        where: { id },
+      });
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/admin/holidays", async (req, res) => {
+    try {
+      const holidays = await prisma.holiday.findMany({
+        orderBy: {
+          date: 'asc',
+        },
+      });
+      res.json(holidays);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/create-holiday", async (req, res) => {
+    try {
+      const data = createHolidayRequestSchema.parse(req.body);
+      
+      const holidayDate = new Date(data.date);
+      const existing = await prisma.holiday.findUnique({ where: { date: holidayDate } });
+      if (existing) {
+        return res.status(400).json({ error: "この日付は既に休館日として登録されています。" });
+      }
+      
+      const holiday = await prisma.holiday.create({
+        data: {
+          id: createId(),
+          date: holidayDate,
+          name: data.name,
+        },
+      });
+      
+      res.json(holiday);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/admin/delete-holiday", async (req, res) => {
+    try {
+      const { id } = deleteHolidayRequestSchema.parse(req.body);
+      
+      const existing = await prisma.holiday.findUnique({ where: { id } });
+      if (!existing) {
+        return res.status(404).json({ error: "指定された休館日が見つかりません。" });
+      }
+      
+      await prisma.holiday.delete({
         where: { id },
       });
       

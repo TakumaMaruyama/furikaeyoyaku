@@ -43,3 +43,10 @@ model Request {
   toSlotStartDateTime  DateTime
   createdAt            DateTime @default(now())
 }
+
+model Holiday {
+  id          String   @id
+  date        DateTime @unique
+  name        String
+  createdAt   DateTime @default(now())
+}

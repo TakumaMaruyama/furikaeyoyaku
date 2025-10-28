@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CheckCircleIcon, ClockIcon, XCircleIcon } from "lucide-react";
 import { Link } from "wouter";
+import type { HolidayResponse } from "@shared/schema";
 
 type Request = {
   id: string;
@@ -58,6 +59,7 @@ export default function AdminPage() {
   const [capacityValues, setCapacityValues] = useState<Record<string, any>>({});
   const [showSlotDialog, setShowSlotDialog] = useState(false);
   const [editingSlotData, setEditingSlotData] = useState<ClassSlot | null>(null);
+  const [showHolidayDialog, setShowHolidayDialog] = useState(false);
 
   const { data: confirmedRequests, isLoading: loadingConfirmed } = useQuery<Request[]>({
     queryKey: ["/api/admin/confirmed"],
@@ -69,6 +71,10 @@ export default function AdminPage() {
 
   const { data: allSlots, isLoading: loadingSlots } = useQuery<ClassSlot[]>({
     queryKey: ["/api/admin/slots"],
+  });
+
+  const { data: holidays, isLoading: loadingHolidays } = useQuery<HolidayResponse[]>({
+    queryKey: ["/api/admin/holidays"],
   });
 
   const updateCapacityMutation = useMutation({
@@ -157,6 +163,43 @@ export default function AdminPage() {
         description: "枠を削除しました。",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/slots"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "削除エラー",
+        description: error.message || "削除に失敗しました。",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createHolidayMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/admin/create-holiday", data),
+    onSuccess: () => {
+      toast({
+        title: "登録完了",
+        description: "休館日を登録しました。",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/holidays"] });
+      setShowHolidayDialog(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "登録エラー",
+        description: error.message || "登録に失敗しました。",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteHolidayMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", "/api/admin/delete-holiday", { id }),
+    onSuccess: () => {
+      toast({
+        title: "削除完了",
+        description: "休館日を削除しました。",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/holidays"] });
     },
     onError: (error: any) => {
       toast({
@@ -537,6 +580,69 @@ export default function AdminPage() {
                 )}
               </CardContent>
             </Card>
+
+            <Card className="border-2 mt-6">
+              <CardHeader className="p-6 flex-row items-center justify-between gap-4 space-y-0">
+                <div>
+                  <CardTitle className="text-xl">休館日管理</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    スクールの休館日を登録
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setShowHolidayDialog(true)}
+                  data-testid="button-create-holiday"
+                  size="default"
+                  className="font-semibold"
+                >
+                  休館日を登録
+                </Button>
+              </CardHeader>
+              <CardContent className="p-6 pt-0">
+                {loadingHolidays && (
+                  <div className="flex justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                )}
+
+                {!loadingHolidays && holidays && holidays.length === 0 && (
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">休館日が登録されていません</p>
+                  </div>
+                )}
+
+                {!loadingHolidays && holidays && holidays.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {holidays.map((holiday) => (
+                      <Card key={holiday.id} className="border" data-testid={`card-holiday-${holiday.id}`}>
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-lg font-semibold">
+                                {format(new Date(holiday.date), "yyyy年M月d日(E)", { locale: ja })}
+                              </p>
+                              <p className="text-sm text-muted-foreground mt-1">{holiday.name}</p>
+                            </div>
+                            <Button
+                              onClick={() => {
+                                if (confirm(`${holiday.name}を削除しますか？`)) {
+                                  deleteHolidayMutation.mutate(holiday.id);
+                                }
+                              }}
+                              variant="outline"
+                              size="sm"
+                              data-testid={`button-delete-holiday-${holiday.id}`}
+                            >
+                              削除
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </main>
@@ -556,6 +662,14 @@ export default function AdminPage() {
               createSlotMutation.mutate(data);
             }
           }}
+        />
+      )}
+
+      {showHolidayDialog && (
+        <HolidayDialog
+          open={showHolidayDialog}
+          onOpenChange={setShowHolidayDialog}
+          onSave={(data) => createHolidayMutation.mutate(data)}
         />
       )}
 
@@ -765,6 +879,94 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
               </Button>
               <Button type="submit" data-testid="button-save-slot">
                 {slot ? "更新" : "作成"}
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type HolidayDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (data: any) => void;
+};
+
+function HolidayDialog({ open, onOpenChange, onSave }: HolidayDialogProps) {
+  const form = useForm({
+    resolver: zodResolver(
+      z.object({
+        date: z.string().min(1, "日付を選択してください"),
+        name: z.string().min(1, "休館日名を入力してください"),
+      })
+    ),
+    defaultValues: {
+      date: "",
+      name: "",
+    },
+  });
+
+  const handleSubmit = (data: any) => {
+    onSave(data);
+    form.reset();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-xl">休館日を登録</DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="date"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>日付</FormLabel>
+                  <FormControl>
+                    <Input {...field} type="date" data-testid="input-holiday-date" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>休館日名</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder="例：年末年始休館"
+                      data-testid="input-holiday-name"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  onOpenChange(false);
+                  form.reset();
+                }}
+                data-testid="button-cancel-holiday"
+              >
+                キャンセル
+              </Button>
+              <Button type="submit" data-testid="button-save-holiday">
+                登録
               </Button>
             </div>
           </form>
