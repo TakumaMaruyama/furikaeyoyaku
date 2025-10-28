@@ -573,10 +573,16 @@ export default function AdminPage() {
                     </div>
                     <div className="space-y-4">
                       {selectedDate && (() => {
-                        const dateStr = selectedDate.toISOString().split('T')[0];
-                        const daySlots = allSlots.filter(slot => 
-                          new Date(slot.date).toISOString().split('T')[0] === dateStr
-                        );
+                        const selectedYear = selectedDate.getFullYear();
+                        const selectedMonth = selectedDate.getMonth();
+                        const selectedDay = selectedDate.getDate();
+                        
+                        const daySlots = allSlots.filter(slot => {
+                          const slotDate = new Date(slot.date);
+                          return slotDate.getFullYear() === selectedYear &&
+                                 slotDate.getMonth() === selectedMonth &&
+                                 slotDate.getDate() === selectedDay;
+                        });
                         
                         if (daySlots.length === 0) {
                           return (
