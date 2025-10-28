@@ -959,12 +959,14 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
   // クラス帯が選択されたときにデフォルト値を設定
   const handleClassBandChange = (band: string, checked: boolean) => {
     if (checked && !classBandCapacities[band]) {
+      const defaultLimit = 10;
+      const defaultCurrent = 0;
       setClassBandCapacities({
         ...classBandCapacities,
         [band]: {
-          capacityLimit: 10,
-          capacityCurrent: 0,
-          capacityMakeupAllowed: 2,
+          capacityLimit: defaultLimit,
+          capacityCurrent: defaultCurrent,
+          capacityMakeupAllowed: defaultLimit - defaultCurrent,
         }
       });
     }
@@ -1083,15 +1085,18 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
                         <Input
                           type="number"
                           value={classBandCapacities[band]?.capacityLimit ?? 10}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const newLimit = parseInt(e.target.value) || 0;
+                            const current = classBandCapacities[band]?.capacityCurrent ?? 0;
                             setClassBandCapacities({
                               ...classBandCapacities,
                               [band]: {
                                 ...classBandCapacities[band],
-                                capacityLimit: parseInt(e.target.value) || 0,
+                                capacityLimit: newLimit,
+                                capacityMakeupAllowed: Math.max(0, newLimit - current),
                               },
-                            })
-                          }
+                            });
+                          }}
                           data-testid={`input-${band}-capacitylimit`}
                           className="h-9"
                         />
@@ -1101,15 +1106,18 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
                         <Input
                           type="number"
                           value={classBandCapacities[band]?.capacityCurrent ?? 0}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const newCurrent = parseInt(e.target.value) || 0;
+                            const limit = classBandCapacities[band]?.capacityLimit ?? 10;
                             setClassBandCapacities({
                               ...classBandCapacities,
                               [band]: {
                                 ...classBandCapacities[band],
-                                capacityCurrent: parseInt(e.target.value) || 0,
+                                capacityCurrent: newCurrent,
+                                capacityMakeupAllowed: Math.max(0, limit - newCurrent),
                               },
-                            })
-                          }
+                            });
+                          }}
                           data-testid={`input-${band}-capacitycurrent`}
                           className="h-9"
                         />
