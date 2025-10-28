@@ -61,7 +61,7 @@ export default function AdminPage() {
   const [showSlotDialog, setShowSlotDialog] = useState(false);
   const [editingSlotData, setEditingSlotData] = useState<ClassSlot | null>(null);
   const [showHolidayDialog, setShowHolidayDialog] = useState(false);
-  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("calendar");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
 
   const { data: confirmedRequests, isLoading: loadingConfirmed } = useQuery<Request[]>({
