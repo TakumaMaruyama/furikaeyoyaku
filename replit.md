@@ -44,6 +44,11 @@
    - 枠容量（振替受入枠数、使用済み枠数）の編集機能
    - 「1時間前クローズ」ボタンで待ちリストを手動クローズ
 
+3. **枠管理タブ**
+   - ClassSlot（レッスン枠）の作成・編集・削除機能
+   - 日時、コース名、クラス帯、定員、振替受入枠数の設定
+   - 休館日の登録・削除機能（日付と休館日名の設定）
+
 ### 自動処理
 
 1. **空き枠発生時の自動確定**
@@ -69,6 +74,13 @@
 - `GET /api/admin/waiting` - 待ちリスト一覧取得
 - `POST /admin/update-slot-capacity` - 枠容量更新
 - `POST /admin/close-waitlist` - 待ちリスト手動クローズ
+- `GET /api/admin/slots` - 全ClassSlot取得
+- `POST /api/admin/create-slot` - ClassSlot作成
+- `PUT /api/admin/update-slot` - ClassSlot更新
+- `DELETE /api/admin/delete-slot` - ClassSlot削除
+- `GET /api/admin/holidays` - 休館日一覧取得
+- `POST /api/admin/create-holiday` - 休館日登録
+- `DELETE /api/admin/delete-holiday` - 休館日削除
 
 ## データモデル
 
@@ -78,12 +90,31 @@
 ### ClassSlot
 - レッスン枠（日時、コース名、クラス帯、容量情報など）
 
+### Holiday
+- 休館日（日付、休館日名）
+
 ### Request
 - 振替リクエスト（子ども名、欠席日、振替先、ステータスなど）
 
 ## 最近の変更
 
-**2025-10-28**: 重要なバグ修正とMVP完成
+**2025-10-28 (2)**: ClassSlot管理と休館日管理機能を追加
+- 管理画面に「枠管理」タブを追加
+- ClassSlot（レッスン枠）のCRUD機能を実装：
+  - 作成・編集・削除のダイアログUI
+  - 日時、コース名、クラス帯、定員、振替受入枠数の設定
+  - バックエンドAPIの実装（create/update/delete）
+- 休館日管理機能を実装：
+  - 休館日の登録・削除UI
+  - Holidayモデルの追加（Prismaスキーマ）
+  - バックエンドAPIの実装（create/delete）
+- データバリデーション強化：
+  - createHolidayRequestSchemaに日付形式の正規表現バリデーション追加
+  - shared/schema.tsにHolidayResponse型を追加し型の重複を解消
+- E2Eテスト成功：全機能が正常に動作
+- Architectレビュー合格：コード品質、セキュリティ、保守性の確認完了
+
+**2025-10-28 (1)**: 重要なバグ修正とMVP完成
 - **重大なバグ修正**: apiRequest関数がJSONを返すように修正（検索結果が表示されない問題を解決）
 - FormFieldコンポーネントを使用してフォームをreact-hook-formと完全統合
 - 保護者向け画面と管理画面間のナビゲーションリンクを追加
