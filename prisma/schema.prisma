@@ -28,10 +28,36 @@ model ClassSlot {
   lastNotifiedRequestId String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+  absenceNotices       AbsenceNotice[]
+  makeupAbsenceNotices AbsenceNotice[] @relation("MakeupSlot")
+}
+
+model AbsenceNotice {
+  id                   String        @id @default(cuid())
+  childName            String
+  declaredClassBand    String
+  contactEmail         String?
+  absentDate           DateTime
+  originalSlotId       String
+  resumeToken          String        @unique
+  makeupDeadline       DateTime
+  makeupStatus         String        @default("ABSENT_LOGGED")
+  makeupSlotId         String?
+  makeupAllowanceDelta Int           @default(0)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  originalSlot         ClassSlot     @relation(fields: [originalSlotId], references: [id])
+  makeupSlot           ClassSlot?    @relation("MakeupSlot", fields: [makeupSlotId], references: [id])
+  requests             Request[]
+
+  @@index([originalSlotId])
+  @@index([makeupDeadline])
+  @@unique([childName, originalSlotId])
 }
 
 model Request {
-  id                   String   @id
+  id                   String        @id
   childName            String
   declaredClassBand    String
   absentDate           DateTime
@@ -41,7 +67,10 @@ model Request {
   confirmToken         String?
   declineToken         String?
   toSlotStartDateTime  DateTime
-  createdAt            DateTime @default(now())
+  createdAt            DateTime      @default(now())
+  absenceNoticeId      String?
+
+  absenceNotice        AbsenceNotice? @relation(fields: [absenceNoticeId], references: [id])
 }
 
 model Holiday {

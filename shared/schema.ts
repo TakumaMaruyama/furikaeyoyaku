@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+export const classBandEnum = z.enum(["初級", "中級", "上級"], {
+  required_error: "クラス帯を選択してください",
+});
+
+export const absenceStatusEnum = z.enum([
+  "ABSENT_LOGGED",
+  "WAITING",
+  "MAKEUP_CONFIRMED",
+  "EXPIRED",
+  "CANCELLED",
+]);
+
 export const globalSettingsSchema = z.object({
   id: z.number(),
   makeupWindowDays: z.number(),
@@ -11,7 +23,7 @@ export const classSlotSchema = z.object({
   date: z.date(),
   startTime: z.string(),
   courseLabel: z.string(),
-  classBand: z.enum(["初級", "中級", "上級"]),
+  classBand: classBandEnum,
   capacityLimit: z.number(),
   capacityCurrent: z.number(),
   capacityMakeupAllowed: z.number(),
@@ -26,7 +38,7 @@ export const classSlotSchema = z.object({
 export const requestSchema = z.object({
   id: z.string(),
   childName: z.string(),
-  declaredClassBand: z.enum(["初級", "中級", "上級"]),
+  declaredClassBand: classBandEnum,
   absentDate: z.date(),
   toSlotId: z.string(),
   status: z.enum(["確定", "待ち", "却下", "期限切れ"]),
@@ -39,25 +51,68 @@ export const requestSchema = z.object({
 
 export const searchSlotsRequestSchema = z.object({
   childName: z.string().min(1, "お子様の名前を入力してください"),
-  declaredClassBand: z.enum(["初級", "中級", "上級"], {
-    required_error: "クラス帯を選択してください"
-  }),
+  declaredClassBand: classBandEnum,
   absentDateISO: z.string().min(1, "欠席日を選択してください"),
+  absenceToken: z.string().min(1, "欠席連絡を完了してください"),
 });
 
 export const bookRequestSchema = z.object({
   childName: z.string().min(1),
-  declaredClassBand: z.enum(["初級", "中級", "上級"]),
+  declaredClassBand: classBandEnum,
   absentDateISO: z.string(),
   toSlotId: z.string(),
+  absenceToken: z.string().min(1),
 });
 
 export const waitlistRequestSchema = z.object({
   childName: z.string().min(1),
-  declaredClassBand: z.enum(["初級", "中級", "上級"]),
+  declaredClassBand: classBandEnum,
   absentDateISO: z.string(),
   toSlotId: z.string(),
   contactEmail: z.string().email("正しいメールアドレスを入力してください"),
+  absenceToken: z.string().min(1),
+});
+
+export const createAbsenceNoticeSchema = z.object({
+  childName: z.string().min(1, "お子様の名前を入力してください"),
+  declaredClassBand: classBandEnum,
+  absentDateISO: z.string().min(1, "欠席予定日を選択してください"),
+  originalSlotId: z.string().min(1, "欠席するレッスン枠を選択してください"),
+  contactEmail: z.string().email("正しいメールアドレスを入力してください").optional(),
+});
+
+export const absenceNoticeSchema = z.object({
+  id: z.string(),
+  childName: z.string(),
+  declaredClassBand: classBandEnum,
+  contactEmail: z.string().email().nullable(),
+  absentDate: z.date(),
+  originalSlotId: z.string(),
+  resumeToken: z.string(),
+  makeupDeadline: z.date(),
+  makeupStatus: absenceStatusEnum,
+  makeupSlotId: z.string().nullable(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export const resumeAbsenceResponseSchema = z.object({
+  childName: z.string(),
+  declaredClassBand: classBandEnum,
+  absentDateISO: z.string(),
+  resumeToken: z.string(),
+  originalSlotId: z.string(),
+  makeupDeadlineISO: z.string(),
+  makeupStatus: absenceStatusEnum,
+  contactEmail: z.string().email().nullable(),
+  makeupSlotId: z.string().nullable(),
+  originalSlot: z.object({
+    id: z.string(),
+    date: z.string(),
+    startTime: z.string(),
+    courseLabel: z.string(),
+    classBand: classBandEnum,
+  }),
 });
 
 export const updateSlotCapacityRequestSchema = z.object({
@@ -75,7 +130,7 @@ export const createSlotRequestSchema = z.object({
   date: z.string(),
   startTime: z.string(),
   courseLabel: z.string().min(1, "コース名を入力してください"),
-  classBands: z.array(z.enum(["初級", "中級", "上級"])).min(1, "少なくとも1つのクラス帯を選択してください"),
+  classBands: z.array(classBandEnum).min(1, "少なくとも1つのクラス帯を選択してください"),
   classBandCapacities: z.record(z.object({
     capacityLimit: z.number().min(0),
     capacityCurrent: z.number().min(0),
@@ -90,7 +145,7 @@ export const updateSlotRequestSchema = z.object({
   date: z.string().optional(),
   startTime: z.string().optional(),
   courseLabel: z.string().optional(),
-  classBand: z.enum(["初級", "中級", "上級"]).optional(),
+  classBand: classBandEnum.optional(),
   capacityLimit: z.number().optional(),
   capacityCurrent: z.number().optional(),
   capacityMakeupAllowed: z.number().optional(),
@@ -128,6 +183,7 @@ export type Request = z.infer<typeof requestSchema>;
 export type SearchSlotsRequest = z.infer<typeof searchSlotsRequestSchema>;
 export type BookRequest = z.infer<typeof bookRequestSchema>;
 export type WaitlistRequest = z.infer<typeof waitlistRequestSchema>;
+export type CreateAbsenceNoticeRequest = z.infer<typeof createAbsenceNoticeSchema>;
 export type UpdateSlotCapacityRequest = z.infer<typeof updateSlotCapacityRequestSchema>;
 export type CloseWaitlistRequest = z.infer<typeof closeWaitlistRequestSchema>;
 export type CreateSlotRequest = z.infer<typeof createSlotRequestSchema>;
@@ -135,6 +191,10 @@ export type UpdateSlotRequest = z.infer<typeof updateSlotRequestSchema>;
 export type DeleteSlotRequest = z.infer<typeof deleteSlotRequestSchema>;
 export type CreateHolidayRequest = z.infer<typeof createHolidayRequestSchema>;
 export type DeleteHolidayRequest = z.infer<typeof deleteHolidayRequestSchema>;
+export type AbsenceNotice = z.infer<typeof absenceNoticeSchema>;
+export type ResumeAbsenceResponse = z.infer<typeof resumeAbsenceResponseSchema>;
+export type ClassBand = z.infer<typeof classBandEnum>;
+export type AbsenceStatus = z.infer<typeof absenceStatusEnum>;
 
 export type SlotSearchResult = {
   slotId: string;

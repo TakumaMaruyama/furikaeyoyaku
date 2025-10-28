@@ -1,41 +1,372 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { prisma } from "./db";
-import { 
-  searchSlotsRequestSchema, 
-  bookRequestSchema, 
-  waitlistRequestSchema, 
-  updateSlotCapacityRequestSchema, 
+import { Prisma } from "@prisma/client";
+import {
+  searchSlotsRequestSchema,
+  bookRequestSchema,
+  waitlistRequestSchema,
+  updateSlotCapacityRequestSchema,
   closeWaitlistRequestSchema,
   createSlotRequestSchema,
   updateSlotRequestSchema,
   deleteSlotRequestSchema,
   createHolidayRequestSchema,
-  deleteHolidayRequestSchema
+  deleteHolidayRequestSchema,
+  createAbsenceNoticeSchema,
 } from "@shared/schema";
+import type { AbsenceStatus } from "@shared/schema";
 import { sendConfirmationEmail, sendExpiredEmail } from "./email-service";
 import { createId } from "@paralleldrive/cuid2";
 import { startScheduler } from "./scheduler";
-import { format } from "date-fns";
+import { addDays, format, isAfter } from "date-fns";
+
+type AbsenceWithRelations = Prisma.AbsenceNoticeGetPayload<{
+  include: { originalSlot: true; makeupSlot: true };
+}>;
+
+const ABSENCE_STATUS = {
+  ABSENT_LOGGED: "ABSENT_LOGGED",
+  WAITING: "WAITING",
+  MAKEUP_CONFIRMED: "MAKEUP_CONFIRMED",
+  EXPIRED: "EXPIRED",
+  CANCELLED: "CANCELLED",
+} as const satisfies Record<string, AbsenceStatus>;
+
+class HttpError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
+const isoDate = (date: Date) => format(date, "yyyy-MM-dd");
+
+async function getMakeupWindowDays() {
+  const settings = await prisma.globalSettings.findUnique({ where: { id: 1 } });
+  return settings?.makeupWindowDays ?? 30;
+}
+
+async function loadAbsenceByToken(token: string): Promise<AbsenceWithRelations> {
+  const absence = await prisma.absenceNotice.findUnique({
+    where: { resumeToken: token },
+    include: {
+      originalSlot: true,
+      makeupSlot: true,
+    },
+  });
+
+  if (!absence) {
+    throw new HttpError(404, "欠席情報が見つかりません。");
+  }
+
+  return absence;
+}
+
+async function ensureAbsenceActive(token: string): Promise<AbsenceWithRelations> {
+  const absence = await loadAbsenceByToken(token);
+  const now = new Date();
+
+  if (absence.makeupStatus === ABSENCE_STATUS.MAKEUP_CONFIRMED) {
+    throw new HttpError(409, "この欠席についてはすでに振替が確定しています。");
+  }
+
+  if (absence.makeupStatus === ABSENCE_STATUS.CANCELLED) {
+    throw new HttpError(409, "この欠席連絡は取り消されています。");
+  }
+
+  if (isAfter(now, absence.makeupDeadline)) {
+    if (absence.makeupStatus !== ABSENCE_STATUS.EXPIRED) {
+      await prisma.absenceNotice.update({
+        where: { id: absence.id },
+        data: { makeupStatus: ABSENCE_STATUS.EXPIRED },
+      });
+    }
+    throw new HttpError(410, "振替期限を過ぎています。");
+  }
+
+  return absence;
+}
+
+function mapAbsenceToResponse(absence: AbsenceWithRelations) {
+  return {
+    childName: absence.childName,
+    declaredClassBand: absence.declaredClassBand,
+    absentDateISO: isoDate(absence.absentDate),
+    originalSlotId: absence.originalSlotId,
+    resumeToken: absence.resumeToken,
+    makeupDeadlineISO: absence.makeupDeadline.toISOString(),
+    makeupStatus: absence.makeupStatus,
+    contactEmail: absence.contactEmail,
+    originalSlot: {
+      id: absence.originalSlot.id,
+      date: isoDate(absence.originalSlot.date),
+      startTime: absence.originalSlot.startTime,
+      courseLabel: absence.originalSlot.courseLabel,
+      classBand: absence.originalSlot.classBand,
+    },
+    makeupSlotId: absence.makeupSlotId ?? null,
+  };
+}
+
+function mapAbsenceToAdminResponse(absence: AbsenceWithRelations) {
+  const base = mapAbsenceToResponse(absence);
+  return {
+    ...base,
+    contactEmail: absence.contactEmail,
+    createdAtISO: absence.createdAt.toISOString(),
+    updatedAtISO: absence.updatedAt.toISOString(),
+    makeupSlot: absence.makeupSlot
+      ? {
+          id: absence.makeupSlot.id,
+          courseLabel: absence.makeupSlot.courseLabel,
+          classBand: absence.makeupSlot.classBand,
+          startTime: absence.makeupSlot.startTime,
+          lessonStartDateTime: absence.makeupSlot.lessonStartDateTime.toISOString(),
+        }
+      : null,
+  };
+}
+
+async function findActiveRequest(absenceId: string) {
+  return prisma.request.findFirst({
+    where: {
+      absenceNoticeId: absenceId,
+      status: { in: ["待ち", "確定"] },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  app.post("/api/absences", async (req, res) => {
+    try {
+      const data = createAbsenceNoticeSchema.parse(req.body);
+
+      const [originalSlot, makeupWindowDays] = await Promise.all([
+        prisma.classSlot.findUnique({ where: { id: data.originalSlotId } }),
+        getMakeupWindowDays(),
+      ]);
+
+      if (!originalSlot) {
+        throw new HttpError(404, "欠席するレッスン枠が見つかりません。");
+      }
+
+      if (originalSlot.classBand !== data.declaredClassBand) {
+        throw new HttpError(400, "クラス帯が一致しません。");
+      }
+
+      const absentDate = new Date(data.absentDateISO);
+      if (isoDate(originalSlot.date) !== data.absentDateISO) {
+        throw new HttpError(400, "欠席日と枠の日付が一致しません。");
+      }
+
+      if (isAfter(new Date(), originalSlot.lessonStartDateTime)) {
+        throw new HttpError(400, "既にレッスン開始時刻を過ぎています。");
+      }
+
+      const existing = await prisma.absenceNotice.findUnique({
+        where: {
+          childName_originalSlotId: {
+            childName: data.childName,
+            originalSlotId: data.originalSlotId,
+          },
+        },
+        include: {
+          originalSlot: true,
+          makeupSlot: true,
+        },
+      });
+
+      if (existing) {
+        if (existing.makeupStatus === ABSENCE_STATUS.MAKEUP_CONFIRMED) {
+          throw new HttpError(409, "この枠の欠席連絡は既に振替が完了しています。");
+        }
+
+        const updatedDeadline = addDays(absentDate, makeupWindowDays);
+        const updated = await prisma.absenceNotice.update({
+          where: { id: existing.id },
+          data: {
+            contactEmail: data.contactEmail ?? existing.contactEmail,
+            absentDate,
+            makeupDeadline: updatedDeadline,
+            makeupStatus:
+              existing.makeupStatus === ABSENCE_STATUS.EXPIRED && !isAfter(new Date(), updatedDeadline)
+                ? ABSENCE_STATUS.ABSENT_LOGGED
+                : existing.makeupStatus,
+          },
+          include: {
+            originalSlot: true,
+            makeupSlot: true,
+          },
+        });
+
+        return res.json({
+          success: true,
+          absence: mapAbsenceToResponse(updated),
+        });
+      }
+
+      const resumeToken = createId();
+      const makeupDeadline = addDays(absentDate, makeupWindowDays);
+
+      const adjustmentDelta = originalSlot.capacityCurrent > 0 ? 1 : 0;
+
+      const createdAbsence = await prisma.$transaction(async (tx) => {
+        const created = await tx.absenceNotice.create({
+          data: {
+            childName: data.childName,
+            declaredClassBand: data.declaredClassBand,
+            contactEmail: data.contactEmail ?? null,
+            absentDate,
+            originalSlotId: originalSlot.id,
+            resumeToken,
+            makeupDeadline,
+            makeupStatus: ABSENCE_STATUS.ABSENT_LOGGED,
+            makeupAllowanceDelta: adjustmentDelta,
+          },
+        });
+
+        if (adjustmentDelta > 0) {
+          await tx.classSlot.update({
+            where: { id: originalSlot.id },
+            data: {
+              capacityCurrent: { decrement: adjustmentDelta },
+              capacityMakeupAllowed: { increment: adjustmentDelta },
+            },
+          });
+        }
+
+        return created;
+      });
+
+      const absenceWithSlot = await prisma.absenceNotice.findUniqueOrThrow({
+        where: { id: createdAbsence.id },
+        include: {
+          originalSlot: true,
+          makeupSlot: true,
+        },
+      });
+
+      res.json({
+        success: true,
+        absence: mapAbsenceToResponse(absenceWithSlot),
+      });
+    } catch (error: any) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        return res.status(409).json({ error: "同じ欠席が既に登録されています。" });
+      }
+      res.status(400).json({ error: error.message ?? "欠席連絡の登録に失敗しました。" });
+    }
+  });
+
+  app.get("/api/absences/:token", async (req, res) => {
+    try {
+      const token = req.params.token;
+      if (!token) {
+        throw new HttpError(400, "token が必要です。");
+      }
+
+      const absence = await loadAbsenceByToken(token);
+      const now = new Date();
+      if (isAfter(now, absence.makeupDeadline) && absence.makeupStatus !== ABSENCE_STATUS.MAKEUP_CONFIRMED) {
+        const expired = await prisma.absenceNotice.update({
+          where: { id: absence.id },
+          data: { makeupStatus: ABSENCE_STATUS.EXPIRED },
+          include: {
+            originalSlot: true,
+            makeupSlot: true,
+          },
+        });
+        return res.json({ success: true, absence: mapAbsenceToResponse(expired) });
+      }
+
+      res.json({ success: true, absence: mapAbsenceToResponse(absence) });
+    } catch (error: any) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      res.status(400).json({ error: error.message ?? "欠席情報の取得に失敗しました。" });
+    }
+  });
+
+  app.get("/api/class-slots", async (req, res) => {
+    try {
+      const { date, classBand } = req.query;
+
+      if (!date || typeof date !== "string") {
+        throw new HttpError(400, "date パラメータを指定してください。");
+      }
+
+      if (!classBand || typeof classBand !== "string") {
+        throw new HttpError(400, "classBand パラメータを指定してください。");
+      }
+
+      const dayStart = new Date(`${date}T00:00:00`);
+      const dayEnd = new Date(`${date}T23:59:59.999`);
+
+      const slots = await prisma.classSlot.findMany({
+        where: {
+          classBand,
+          date: {
+            gte: dayStart,
+            lte: dayEnd,
+          },
+        },
+        orderBy: {
+          lessonStartDateTime: "asc",
+        },
+      });
+
+      res.json({
+        success: true,
+        slots: slots.map((slot) => ({
+          id: slot.id,
+          date: isoDate(slot.date),
+          startTime: slot.startTime,
+          courseLabel: slot.courseLabel,
+          lessonStartDateTime: slot.lessonStartDateTime.toISOString(),
+        })),
+      });
+    } catch (error: any) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      res.status(400).json({ error: error.message ?? "枠情報の取得に失敗しました。" });
+    }
+  });
+
 
   app.post("/api/search-slots", async (req, res) => {
     try {
       const data = searchSlotsRequestSchema.parse(req.body);
+      const absence = await ensureAbsenceActive(data.absenceToken);
 
-      const settings = await prisma.globalSettings.findUnique({ where: { id: 1 } });
-      const makeupWindowDays = settings?.makeupWindowDays || 30;
+      if (data.childName !== absence.childName) {
+        throw new HttpError(400, "欠席情報とお子様の名前が一致しません。");
+      }
 
-      const absentDate = new Date(data.absentDateISO);
-      const startRange = new Date(absentDate);
-      startRange.setDate(startRange.getDate() - makeupWindowDays);
-      const endRange = new Date(absentDate);
-      endRange.setDate(endRange.getDate() + makeupWindowDays);
+      if (data.declaredClassBand !== absence.declaredClassBand) {
+        throw new HttpError(400, "欠席情報とクラス帯が一致しません。");
+      }
+
+      if (data.absentDateISO !== isoDate(absence.absentDate)) {
+        throw new HttpError(400, "欠席日が一致しません。");
+      }
+
+      const makeupWindowDays = await getMakeupWindowDays();
+      const absentDate = absence.absentDate;
+      const startRange = addDays(absentDate, -makeupWindowDays);
+      const endRange = addDays(absentDate, makeupWindowDays);
 
       const slots = await prisma.classSlot.findMany({
         where: {
-          classBand: data.declaredClassBand,
+          classBand: absence.declaredClassBand,
           date: {
             gte: startRange,
             lte: endRange,
@@ -45,11 +376,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         },
         orderBy: {
-          lessonStartDateTime: 'asc',
+          lessonStartDateTime: "asc",
         },
       });
 
-      const results = slots.map(slot => {
+      const filtered = slots.filter((slot) => slot.id !== absence.originalSlotId);
+
+      const results = filtered.map((slot) => {
         const remainingSlots = slot.capacityMakeupAllowed - slot.capacityMakeupUsed;
         let statusCode: "〇" | "△" | "×";
         let statusText: string;
@@ -82,6 +415,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(results);
     } catch (error: any) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ error: error.message });
+      }
       res.status(400).json({ error: error.message });
     }
   });
@@ -90,45 +426,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const data = bookRequestSchema.parse(req.body);
 
-      const slot = await prisma.classSlot.findUnique({ where: { id: data.toSlotId } });
-      if (!slot) {
-        return res.status(404).json({ success: false, message: "指定された枠が見つかりません。" });
+      const absence = await ensureAbsenceActive(data.absenceToken);
+
+      if (data.childName !== absence.childName) {
+        throw new HttpError(400, "欠席情報とお子様の名前が一致しません。");
       }
 
-      if (slot.classBand !== data.declaredClassBand) {
-        return res.status(400).json({ success: false, message: "クラス帯が一致しません。" });
+      if (data.declaredClassBand !== absence.declaredClassBand) {
+        throw new HttpError(400, "欠席情報とクラス帯が一致しません。");
+      }
+
+      if (data.absentDateISO !== isoDate(absence.absentDate)) {
+        throw new HttpError(400, "欠席日が一致しません。");
+      }
+
+      const slot = await prisma.classSlot.findUnique({ where: { id: data.toSlotId } });
+      if (!slot) {
+        throw new HttpError(404, "指定された枠が見つかりません。");
+      }
+
+      if (slot.classBand !== absence.declaredClassBand) {
+        throw new HttpError(400, "クラス帯が一致しません。");
       }
 
       const remainingSlots = slot.capacityMakeupAllowed - slot.capacityMakeupUsed;
       if (remainingSlots < 1) {
-        return res.status(400).json({ success: false, message: "空きがありません。順番待ちで申し込んでください。" });
+        throw new HttpError(400, "空きがありません。順番待ちで申し込んでください。");
       }
 
-      await prisma.request.create({
-        data: {
-          id: createId(),
-          childName: data.childName,
-          declaredClassBand: data.declaredClassBand,
-          absentDate: new Date(data.absentDateISO),
-          toSlotId: data.toSlotId,
-          status: "確定",
-          contactEmail: null,
-          confirmToken: null,
-          declineToken: null,
-          toSlotStartDateTime: slot.lessonStartDateTime,
-        },
-      });
+      const activeRequest = await findActiveRequest(absence.id);
+      if (activeRequest) {
+        if (activeRequest.status === "確定") {
+          throw new HttpError(409, "既に振替予約が確定しています。");
+        }
+        throw new HttpError(409, "現在順番待ちに登録されています。届いたメールから辞退してから再度お申し込みください。");
+      }
 
-      await prisma.classSlot.update({
-        where: { id: data.toSlotId },
-        data: {
-          capacityMakeupUsed: { increment: 1 },
-        },
+      await prisma.$transaction(async (tx) => {
+        await tx.request.create({
+          data: {
+            id: createId(),
+            childName: absence.childName,
+            declaredClassBand: absence.declaredClassBand,
+            absentDate: absence.absentDate,
+            toSlotId: data.toSlotId,
+            status: "確定",
+            contactEmail: absence.contactEmail,
+            confirmToken: null,
+            declineToken: null,
+            toSlotStartDateTime: slot.lessonStartDateTime,
+            absenceNoticeId: absence.id,
+          },
+        });
+
+        await tx.classSlot.update({
+          where: { id: data.toSlotId },
+          data: {
+            capacityMakeupUsed: { increment: 1 },
+          },
+        });
+
+        await tx.absenceNotice.update({
+          where: { id: absence.id },
+          data: {
+            makeupStatus: ABSENCE_STATUS.MAKEUP_CONFIRMED,
+            makeupSlotId: data.toSlotId,
+          },
+        });
       });
 
       res.json({ success: true, status: "確定", message: "振替予約が成立しました。" });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      res.status(400).json({ error: error.message ?? "振替予約に失敗しました。" });
     }
   });
 
@@ -136,40 +508,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const data = waitlistRequestSchema.parse(req.body);
 
+      const absence = await ensureAbsenceActive(data.absenceToken);
+
+      if (data.childName !== absence.childName) {
+        throw new HttpError(400, "欠席情報とお子様の名前が一致しません。");
+      }
+
+      if (data.declaredClassBand !== absence.declaredClassBand) {
+        throw new HttpError(400, "欠席情報とクラス帯が一致しません。");
+      }
+
+      if (data.absentDateISO !== isoDate(absence.absentDate)) {
+        throw new HttpError(400, "欠席日が一致しません。");
+      }
+
       const slot = await prisma.classSlot.findUnique({ where: { id: data.toSlotId } });
       if (!slot) {
-        return res.status(404).json({ success: false, message: "指定された枠が見つかりません。" });
+        throw new HttpError(404, "指定された枠が見つかりません。");
       }
 
-      if (slot.classBand !== data.declaredClassBand) {
-        return res.status(400).json({ success: false, message: "クラス帯が一致しません。" });
+      if (slot.classBand !== absence.declaredClassBand) {
+        throw new HttpError(400, "クラス帯が一致しません。");
       }
 
-      await prisma.request.create({
-        data: {
-          id: createId(),
-          childName: data.childName,
-          declaredClassBand: data.declaredClassBand,
-          absentDate: new Date(data.absentDateISO),
-          toSlotId: data.toSlotId,
-          status: "待ち",
-          contactEmail: data.contactEmail,
-          confirmToken: null,
-          declineToken: null,
-          toSlotStartDateTime: slot.lessonStartDateTime,
-        },
+      const activeRequest = await findActiveRequest(absence.id);
+      if (activeRequest) {
+        if (activeRequest.status === "確定") {
+          throw new HttpError(409, "既に振替予約が確定しています。");
+        }
+        throw new HttpError(409, "既に順番待ち登録済みです。");
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.request.create({
+          data: {
+            id: createId(),
+            childName: absence.childName,
+            declaredClassBand: absence.declaredClassBand,
+            absentDate: absence.absentDate,
+            toSlotId: data.toSlotId,
+            status: "待ち",
+            contactEmail: data.contactEmail,
+            confirmToken: null,
+            declineToken: null,
+            toSlotStartDateTime: slot.lessonStartDateTime,
+            absenceNoticeId: absence.id,
+          },
+        });
+
+        await tx.classSlot.update({
+          where: { id: data.toSlotId },
+          data: {
+            waitlistCount: { increment: 1 },
+          },
+        });
+
+        await tx.absenceNotice.update({
+          where: { id: absence.id },
+          data: {
+            makeupStatus: ABSENCE_STATUS.WAITING,
+            makeupSlotId: data.toSlotId,
+            contactEmail: data.contactEmail,
+          },
+        });
       });
 
-      await prisma.classSlot.update({
-        where: { id: data.toSlotId },
-        data: {
-          waitlistCount: { increment: 1 },
-        },
+      res.json({
+        success: true,
+        status: "待ち",
+        message: "順番待ちとして受け付けました。空きが出次第、自動的に確定されます。",
       });
-
-      res.json({ success: true, status: "待ち", message: "順番待ちとして受け付けました。空きが出次第、自動的に確定されます。" });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      res.status(400).json({ error: error.message ?? "順番待ち登録に失敗しました。" });
     }
   });
 
@@ -197,27 +610,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const nextRequest = waitingRequests[0];
       const declineToken = createId();
 
-      await prisma.request.update({
-        where: { id: nextRequest.id },
-        data: {
-          status: "確定",
-          declineToken: declineToken,
-        },
-      });
+        await prisma.request.update({
+          where: { id: nextRequest.id },
+          data: {
+            status: "確定",
+            declineToken: declineToken,
+          },
+        });
 
-      await prisma.classSlot.update({
-        where: { id: slotId },
-        data: {
-          capacityMakeupUsed: { increment: 1 },
-          waitlistCount: { decrement: 1 },
-        },
-      });
+        await prisma.classSlot.update({
+          where: { id: slotId },
+          data: {
+            capacityMakeupUsed: { increment: 1 },
+            waitlistCount: { decrement: 1 },
+          },
+        });
 
-      if (nextRequest.contactEmail) {
-        try {
-          await sendConfirmationEmail(
-            nextRequest.contactEmail,
-            nextRequest.childName,
+        if (nextRequest.absenceNoticeId) {
+          await prisma.absenceNotice.update({
+            where: { id: nextRequest.absenceNoticeId },
+            data: {
+              makeupStatus: ABSENCE_STATUS.MAKEUP_CONFIRMED,
+              makeupSlotId: slotId,
+              contactEmail: nextRequest.contactEmail ?? null,
+            },
+          });
+        }
+
+        if (nextRequest.contactEmail) {
+          try {
+            await sendConfirmationEmail(
+              nextRequest.contactEmail,
+              nextRequest.childName,
             slot.courseLabel,
             slot.date.toLocaleDateString('ja-JP'),
             slot.startTime,
@@ -291,14 +715,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         data: { status: "却下" },
       });
 
-      await prisma.classSlot.update({
-        where: { id: request.toSlotId },
-        data: {
-          capacityMakeupUsed: { decrement: 1 },
-        },
-      });
+        await prisma.classSlot.update({
+          where: { id: request.toSlotId },
+          data: {
+            capacityMakeupUsed: { decrement: 1 },
+          },
+        });
 
-      await confirmNextWaiter(request.toSlotId);
+        if (request.absenceNoticeId) {
+          await prisma.absenceNotice.update({
+            where: { id: request.absenceNoticeId },
+            data: {
+              makeupStatus: ABSENCE_STATUS.ABSENT_LOGGED,
+              makeupSlotId: null,
+            },
+          });
+        }
+
+        await confirmNextWaiter(request.toSlotId);
 
       res.send(`
 <!DOCTYPE html>
@@ -371,17 +805,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
 
-      for (const request of waitingRequests) {
-        await prisma.request.update({
-          where: { id: request.id },
-          data: { status: "期限切れ" },
-        });
+        for (const request of waitingRequests) {
+          await prisma.request.update({
+            where: { id: request.id },
+            data: { status: "期限切れ" },
+          });
 
-        if (request.contactEmail) {
-          try {
-            await sendExpiredEmail(
-              request.contactEmail,
-              request.childName,
+          if (request.absenceNoticeId) {
+            const absence = await prisma.absenceNotice.findUnique({
+              where: { id: request.absenceNoticeId },
+            });
+            if (absence) {
+              const now = new Date();
+              await prisma.absenceNotice.update({
+                where: { id: absence.id },
+                data: {
+                  makeupStatus: isAfter(now, absence.makeupDeadline)
+                    ? ABSENCE_STATUS.EXPIRED
+                    : ABSENCE_STATUS.ABSENT_LOGGED,
+                  makeupSlotId: null,
+                },
+              });
+            }
+          }
+
+          if (request.contactEmail) {
+            try {
+              await sendExpiredEmail(
+                request.contactEmail,
+                request.childName,
               slot.courseLabel,
               slot.date.toLocaleDateString('ja-JP'),
               slot.startTime,
@@ -473,6 +925,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
       res.json(slots);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/admin/absences", async (_req, res) => {
+    try {
+      const absences = await prisma.absenceNotice.findMany({
+        orderBy: {
+          absentDate: "desc",
+        },
+        include: {
+          originalSlot: true,
+          makeupSlot: true,
+        },
+      });
+      res.json(absences.map(mapAbsenceToAdminResponse));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -724,16 +1193,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "指定された枠が見つかりません。" });
       }
 
-      // 関連するリクエストも削除
-      await prisma.request.deleteMany({
-        where: { toSlotId: id },
-      });
+        // 関連するリクエストも削除
+        await prisma.request.deleteMany({
+          where: { toSlotId: id },
+        });
 
-      await prisma.classSlot.delete({
-        where: { id },
-      });
+        const relatedAbsences = await prisma.absenceNotice.findMany({
+          where: { makeupSlotId: id },
+        });
 
-      res.json({ success: true });
+        for (const absence of relatedAbsences) {
+          const nextStatus = new Date() > absence.makeupDeadline ? "EXPIRED" : "ABSENT_LOGGED";
+          await prisma.absenceNotice.update({
+            where: { id: absence.id },
+            data: {
+              makeupStatus: nextStatus,
+              makeupSlotId: null,
+            },
+          });
+        }
+
+        await prisma.classSlot.delete({
+          where: { id },
+        });
+
+        res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

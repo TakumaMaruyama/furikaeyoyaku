@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -30,6 +30,7 @@ interface WaitlistDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  contactEmail?: string;
 }
 
 export function WaitlistDialog({
@@ -38,6 +39,7 @@ export function WaitlistDialog({
   open,
   onOpenChange,
   onSuccess,
+  contactEmail,
 }: WaitlistDialogProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -49,6 +51,12 @@ export function WaitlistDialog({
     },
   });
 
+  useEffect(() => {
+    form.reset({
+      email: contactEmail ?? "",
+    });
+  }, [contactEmail, open, form]);
+
   const onSubmit = async (data: EmailForm) => {
     setIsSubmitting(true);
     try {
@@ -58,6 +66,7 @@ export function WaitlistDialog({
         absentDateISO: searchParams.absentDateISO,
         toSlotId: slot.slotId,
         contactEmail: data.email,
+        absenceToken: searchParams.absenceToken,
       });
 
       toast({

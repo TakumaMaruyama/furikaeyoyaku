@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { CheckCircleIcon, ClockIcon, XCircleIcon, ListIcon, CalendarIcon } from "lucide-react";
 import { Link } from "wouter";
-import type { HolidayResponse } from "@shared/schema";
+import type { AbsenceStatus, HolidayResponse } from "@shared/schema";
 import { Calendar } from "@/components/ui/calendar";
 
 type Request = {
@@ -54,6 +54,41 @@ type WaitingRequest = {
   requests: Request[];
 };
 
+type AdminAbsence = {
+  id: string;
+  childName: string;
+  declaredClassBand: string;
+  absentDateISO: string;
+  makeupDeadlineISO: string;
+  makeupStatus: AbsenceStatus;
+  contactEmail: string | null;
+  resumeToken: string;
+  originalSlot: {
+    id: string;
+    courseLabel: string;
+    classBand: string;
+    startTime: string;
+    lessonStartDateTime: string;
+  };
+  makeupSlot: {
+    id: string;
+    courseLabel: string;
+    classBand: string;
+    startTime: string;
+    lessonStartDateTime: string;
+  } | null;
+  createdAtISO: string;
+  updatedAtISO: string;
+};
+
+const ADMIN_ABSENCE_STATUS_META: Record<AbsenceStatus, { label: string; badgeClass: string }> = {
+  ABSENT_LOGGED: { label: "欠席登録", badgeClass: "bg-blue-500 text-white" },
+  WAITING: { label: "順番待ち", badgeClass: "bg-amber-500 text-white" },
+  MAKEUP_CONFIRMED: { label: "振替確定", badgeClass: "bg-emerald-600 text-white" },
+  EXPIRED: { label: "期限切れ", badgeClass: "bg-slate-500 text-white" },
+  CANCELLED: { label: "取消済", badgeClass: "bg-slate-500 text-white" },
+};
+
 export default function AdminPage() {
   const { toast } = useToast();
   const [editingSlot, setEditingSlot] = useState<string | null>(null);
@@ -78,6 +113,10 @@ export default function AdminPage() {
 
   const { data: holidays, isLoading: loadingHolidays } = useQuery<HolidayResponse[]>({
     queryKey: ["/api/admin/holidays"],
+  });
+
+  const { data: absences, isLoading: loadingAbsences } = useQuery<AdminAbsence[]>({
+    queryKey: ["/api/admin/absences"],
   });
 
   const updateCapacityMutation = useMutation({
@@ -254,12 +293,15 @@ export default function AdminPage() {
 
       <main className="container px-4 py-8 md:py-12">
         <Tabs defaultValue="confirmed" className="w-full">
-          <TabsList className="grid w-full max-w-3xl grid-cols-3 h-12">
+          <TabsList className="grid w-full max-w-3xl grid-cols-4 h-12">
             <TabsTrigger value="confirmed" data-testid="tab-confirmed" className="text-base">
               確定一覧
             </TabsTrigger>
             <TabsTrigger value="waiting" data-testid="tab-waiting" className="text-base">
               待ち一覧
+            </TabsTrigger>
+            <TabsTrigger value="absences" data-testid="tab-absences" className="text-base">
+              欠席一覧
             </TabsTrigger>
             <TabsTrigger value="slots" data-testid="tab-slots" className="text-base">
               枠管理
@@ -489,6 +531,113 @@ export default function AdminPage() {
                 ))}
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="absences" className="mt-6">
+            <Card className="border-2">
+              <CardHeader className="p-6">
+                <CardTitle className="text-xl">欠席一覧</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  欠席連絡と振替状況を確認できます
+                </p>
+              </CardHeader>
+              <CardContent className="p-6 pt-0">
+                {loadingAbsences && (
+                  <div className="flex justify-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                )}
+
+                {!loadingAbsences && (!absences || absences.length === 0) && (
+                  <div className="text-center py-12 text-muted-foreground">
+                    登録された欠席はありません
+                  </div>
+                )}
+
+                {!loadingAbsences && absences && absences.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="font-semibold">お子様</TableHead>
+                          <TableHead className="font-semibold">欠席日</TableHead>
+                          <TableHead className="font-semibold">元枠</TableHead>
+                          <TableHead className="font-semibold">振替状況</TableHead>
+                          <TableHead className="font-semibold">連絡先</TableHead>
+                          <TableHead className="font-semibold">振替期限</TableHead>
+                          <TableHead className="font-semibold">振替枠</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {absences.map((absence) => {
+                          const statusMeta = ADMIN_ABSENCE_STATUS_META[absence.makeupStatus];
+                          return (
+                            <TableRow key={absence.id} data-testid={`row-absence-${absence.id}`}>
+                              <TableCell>
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-semibold">{absence.childName}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {absence.declaredClassBand}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground font-mono select-all">
+                                    {absence.resumeToken}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                {format(new Date(absence.absentDateISO), "yyyy/M/d(E)", { locale: ja })}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-medium">{absence.originalSlot.courseLabel}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {absence.originalSlot.classBand}／{absence.originalSlot.startTime}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge className={`${statusMeta.badgeClass} text-xs px-2 py-1`}>
+                                  {statusMeta.label}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                {absence.contactEmail ? (
+                                  <a
+                                    href={`mailto:${absence.contactEmail}`}
+                                    className="text-primary hover:underline"
+                                  >
+                                    {absence.contactEmail}
+                                  </a>
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {format(new Date(absence.makeupDeadlineISO), "yyyy/M/d(E)", { locale: ja })}
+                              </TableCell>
+                              <TableCell>
+                                {absence.makeupSlot ? (
+                                  <div className="flex flex-col gap-1">
+                                    <span>{absence.makeupSlot.courseLabel}</span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {format(new Date(absence.makeupSlot.lessonStartDateTime), "M/d(E) H:mm", {
+                                        locale: ja,
+                                      })}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground">未確定</span>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="slots" className="mt-6">
