@@ -1,0 +1,286 @@
+この仕様に従ってフルスタックWebアプリを作成してください。
+
+目的:
+水泳教室の「振替希望受付・待ちリスト管理」を自動化する。
+保護者：振替希望を入れる。
+システム：空き状況の提示、即時確定または待ちリスト受付。
+システム：待ちリスト繰り上がりの連絡と確定も自動化。
+事務局：最終的に既存管理アプリへ登録するだけにする（このアプリ自体は公式記録システムではない）。
+
+技術スタック:
+
+バックエンド: Node.js + Express
+
+DB / ORM: Prisma + SQLite（dev用）
+
+フロント: React + Vite + TypeScript
+
+メール送信: Resend API
+
+スケジューラ: node-cron
+
+環境変数でAPIキーやBASE_URLを管理する(.env)
+
+データモデル（Prisma schema想定）:
+model GlobalSettings {
+id Int @id @default(1)
+makeupWindowDays Int @default(30) // 欠席日の前後何日まで振替OKか
+cutoffTime String @default("16:00") // 案内表示用
+}
+
+model ClassSlot {
+id String @id // 例: "2025-10-28_18:00_chuukyuu"
+date DateTime // 日付 (例: "2025-10-28")
+startTime String // "18:00"
+courseLabel String // 例: "火曜18時コース"
+classBand String // "初級" | "中級" | "上級"
+capacityLimit Int // 規定人数
+capacityCurrent Int // 実際の通常参加人数
+capacityMakeupAllowed Int // 振替として受け入れていい最大人数
+capacityMakeupUsed Int @default(0) // すでに確定した振替人数
+waitlistCount Int @default(0) // 現在の待ち人数
+lessonStartDateTime DateTime // 実際の開始日時 (date + startTime)
+lastNotifiedRequestId String? // いま声掛け中の待ちリクエスト
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+}
+
+model Request {
+id String @id @default(cuid())
+childName String // 保護者が入力した子どもの名前
+declaredClassBand String // 保護者申告のクラス帯(初級/中級/上級)
+absentDate DateTime // 欠席予定日
+toSlotId String // 希望する振替先 ClassSlot.id
+status String // "確定" | "待ち" | "却下" | "期限切れ"
+contactEmail String? // 待機連絡用メール。×申し込み時に取得
+confirmToken String? // 参加確定用ワンタイムトークン
+declineToken String? // 辞退用ワンタイムトークン
+toSlotStartDateTime DateTime // 対象枠の開始日時をコピー保持
+createdAt DateTime @default(now())
+}
+
+派生ロジック:
+
+残り振替枠数 = capacityMakeupAllowed - capacityMakeupUsed
+
+ステータス表示:
+残り枠 >= 2 → 〇「振替可能（残り{n}枠）」
+残り枠 == 1 → △「残席わずか（残り1枠）」
+残り枠 <= 0 → ×「欠席者待ち（現在{waitlistCount}名待ち）」
+
+グローバル設定:
+
+GlobalSettings.makeupWindowDays（日数、初期30）
+欠席日の前後makeupWindowDays日だけ検索対象にする
+
+レッスン開始1時間前を締切とする（後述のクローズ処理で使用）
+
+APIエンドポイント（Express）:
+
+POST /api/search-slots
+入力: { childName, declaredClassBand, absentDateISO }
+処理:
+
+absentDateISO ± makeupWindowDays 日の範囲
+
+classBand が declaredClassBand と一致する ClassSlot のみ抽出
+
+各枠ごとに残り枠数とステータス(〇/△/×)と表示テキストを付ける
+出力例:
+[
+{
+"slotId": "2025-10-28_18:00_chuukyuu",
+"date": "2025-10-28",
+"startTime": "18:00",
+"courseLabel": "火曜18時コース",
+"classBand": "中級",
+"statusCode": "〇", // "〇" | "△" | "×"
+"statusText": "振替可能（残り3枠）",
+"remainingSlots": 3,
+"waitlistCount": 0
+}
+]
+
+POST /api/book
+用途: 〇 / △ 枠に対する即時予約
+入力: { childName, declaredClassBand, absentDateISO, toSlotId }
+処理:
+
+ClassSlotを取得
+
+declaredClassBand と ClassSlot.classBand が一致しない場合はエラー
+
+残り振替枠数 >=1 なら予約成立:
+
+Requestを status="確定" で作成
+
+capacityMakeupUsed を +1
+レスポンス:
+{ success: true, status: "確定", message: "振替予約が成立しました。" }
+
+POST /api/waitlist
+用途: × 枠の順番待ち登録
+入力: { childName, declaredClassBand, absentDateISO, toSlotId, contactEmail }
+処理:
+
+Requestを status="待ち" で作成
+
+ClassSlot.waitlistCount++
+レスポンス:
+{ success: true, status: "待ち", message: "順番待ちとして受け付けました。本日16時までにご連絡します。" }
+
+POST /admin/update-slot-capacity
+用途: 事務局が欠席などで空きを作ったときに枠人数を更新
+入力: { slotId, capacityCurrent?, capacityMakeupAllowed?, capacityMakeupUsed? }
+
+渡された項目だけ更新し、DB保存
+
+更新後、「残り振替枠数」が 0→1 以上に増えた場合は notifyNextWaiter(slotId) を呼ぶ
+
+GET /api/wait-confirm?token=...
+用途: 待ちの保護者が「参加します」を押したときにアクセス
+処理:
+
+tokenからRequest取得
+
+まだstatus="待ち"で、対象枠の残り振替枠数>=1なら
+
+Request.status="確定"
+
+capacityMakeupUsed++
+
+waitlistCount--
+
+成功メッセージHTMLを返す
+
+それ以外なら枠が埋まっている扱い、Request.status="却下"、エラーメッセージHTMLを返す
+
+GET /api/wait-decline?token=...
+用途: 「辞退する」
+処理:
+
+Request.status="却下"
+
+該当枠の waitlistCount--
+
+その後、notifyNextWaiter(slotId) を呼んで次の待ちの人にメール
+
+POST /admin/close-waitlist
+用途: レッスン開始1時間前のクローズ
+入力: { slotId }
+処理:
+
+lessonStartDateTime の1時間前を過ぎていたら:
+
+まだ status="待ち" のRequest全員に「今回はご案内できませんでした」メール送信
+
+それらを status="期限切れ" に変更
+
+waitlistCount=0, lastNotifiedRequestId=null
+
+内部ロジック関数:
+
+notifyNextWaiter(slotId):
+
+そのslotIdで status="待ち" のRequestを createdAt 昇順で取得
+
+一番古いRequestに confirmToken / declineToken を生成・保存
+
+そのRequest.contactEmail宛にResendでメール送信
+
+参加URL: BASE_URL + "/api/wait-confirm?token=..."
+
+辞退URL: BASE_URL + "/api/wait-decline?token=..."
+
+ClassSlot.lastNotifiedRequestId をそのRequest.idに更新
+
+他の待ちメンバーにはまだメールしない
+
+スケジューラ（node-cron定期実行）:
+
+環境変数 WAIT_REPLY_MINUTES（例:30）を参照し、lastNotifiedRequestIdに紐付くRequestがその時間反応なしの場合、自動的に辞退扱いにして次の待ちへnotifyNextWaiterを回す。
+
+lessonStartDateTime の1時間前を過ぎた枠について、自動的に /admin/close-waitlist 相当の処理を実行するロジックもcronで回す。
+
+管理画面（/admin側のReact画面）:
+
+タブA: 確定一覧
+
+Request.status="確定" の行を未来日順に表示
+
+childName, absentDate, toSlotId(=コースラベル＋日付＋時間), createdAt
+
+事務局はこれを見て既存の本番管理アプリへ手入力する
+
+タブB: 待ち一覧
+
+status="待ち" のRequestをslotごとに表示
+
+今誰に声掛け中か（ClassSlot.lastNotifiedRequestId）も表示
+
+そのslotの人数情報(capacityMakeupAllowed, capacityMakeupUsed, waitlistCount)を編集できるフォーム
+
+「1時間前クローズ」ボタン: /admin/close-waitlist 呼び出し
+
+保護者側のReact画面:
+
+検索フォーム
+
+子どもの名前(childName)
+
+クラス帯(declaredClassBand) [プルダウン: "初級","中級","上級"]
+
+欠席日(absentDate)
+
+[検索]ボタンで /api/search-slots
+
+候補一覧
+
+各ClassSlot候補をカード表示
+
+ステータス表示:
+〇 振替可能（残り{n}枠）
+△ 残席わずか（残り1枠）
+× 欠席者待ち（現在{m}名待ち）
+
+〇 / △ には「予約する」ボタン → /api/book
+
+× には「順番待ちで申し込む」ボタンとメールアドレス入力欄 → /api/waitlist
+
+メール送信:
+
+Resend APIを使う。環境変数:
+
+RESEND_API_KEY
+
+FROM_EMAIL
+
+BASE_URL // wait-confirm / wait-decline のURL生成に使う
+
+メールテンプレート:
+
+空きが出た時の確認メール
+件名: [振替] 空きが出ました – {date} {startTime} {classBand}
+本文に「参加する」「辞退する」のURLを含める
+
+期限切れ通知（開始1時間前クローズ時）
+件名: [振替] 今回はご案内できませんでした – {date} {startTime} {classBand}
+
+環境変数例(.env):
+DATABASE_URL="file:./dev.db"
+RESEND_API_KEY="re_xxxxxxxxxxxxxxxxx"
+FROM_EMAIL="noreply@your-domain.jp
+"
+BASE_URL="https://your-repl-url
+"
+WAIT_REPLY_MINUTES="30"
+
+要件:
+
+上記のバックエンド・DBスキーマ・API・cron・Reactフロントを1つのプロジェクトとして構成してください。
+
+Prismaのマイグレーションと、初期シード(GlobalSettingsといくつかのClassSlotダミーデータ)も用意してください。
+
+すべてTypeScript対応でお願いします。
+
+返答時は、プロジェクトのディレクトリ構成と、各主要ファイルの初期実装コードを提示してください。
