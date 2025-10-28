@@ -523,63 +523,106 @@ export default function AdminPage() {
                 )}
 
                 {!loadingSlots && allSlots && allSlots.length > 0 && (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="font-semibold">コース名</TableHead>
-                          <TableHead className="font-semibold">クラス</TableHead>
-                          <TableHead className="font-semibold">日時</TableHead>
-                          <TableHead className="font-semibold">受入枠数</TableHead>
-                          <TableHead className="font-semibold">使用済み</TableHead>
-                          <TableHead className="font-semibold">残り</TableHead>
-                          <TableHead className="font-semibold">操作</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {allSlots.map((slot) => (
-                          <TableRow key={slot.id} data-testid={`row-slot-${slot.id}`}>
-                            <TableCell className="font-medium">{slot.courseLabel}</TableCell>
-                            <TableCell>{slot.classBand}</TableCell>
-                            <TableCell>
-                              {format(new Date(slot.lessonStartDateTime), "yyyy/M/d(E) HH:mm", { locale: ja })}
-                            </TableCell>
-                            <TableCell>{slot.capacityMakeupAllowed}</TableCell>
-                            <TableCell>{slot.capacityMakeupUsed}</TableCell>
-                            <TableCell className="font-semibold">
-                              {slot.capacityMakeupAllowed - slot.capacityMakeupUsed}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-2">
-                                <Button
-                                  onClick={() => {
-                                    setEditingSlotData(slot);
-                                    setShowSlotDialog(true);
-                                  }}
-                                  variant="outline"
-                                  size="sm"
-                                  data-testid={`button-edit-slot-${slot.id}`}
-                                >
-                                  編集
-                                </Button>
-                                <Button
-                                  onClick={() => {
-                                    if (confirm(`${slot.courseLabel}の枠を削除しますか？`)) {
-                                      deleteSlotMutation.mutate(slot.id);
-                                    }
-                                  }}
-                                  variant="outline"
-                                  size="sm"
-                                  data-testid={`button-delete-slot-${slot.id}`}
-                                >
-                                  削除
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                  <div className="space-y-6">
+                    {(() => {
+                      // 日付でグループ化
+                      const slotsByDate = allSlots.reduce((acc, slot) => {
+                        const dateKey = new Date(slot.date).toISOString().split('T')[0];
+                        if (!acc[dateKey]) {
+                          acc[dateKey] = [];
+                        }
+                        acc[dateKey].push(slot);
+                        return acc;
+                      }, {} as Record<string, ClassSlot[]>);
+
+                      // 日付順にソート
+                      const sortedDates = Object.keys(slotsByDate).sort();
+
+                      return sortedDates.map((dateKey) => {
+                        const slots = slotsByDate[dateKey];
+                        const date = new Date(dateKey);
+                        
+                        return (
+                          <div key={dateKey} className="border-2 rounded-lg overflow-hidden">
+                            <div className="bg-muted/50 px-6 py-4 border-b">
+                              <h3 className="text-lg font-bold">
+                                {format(date, "yyyy年M月d日(E)", { locale: ja })}
+                              </h3>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {slots.length}件の枠
+                              </p>
+                            </div>
+                            <div className="divide-y">
+                              {slots
+                                .sort((a, b) => a.startTime.localeCompare(b.startTime))
+                                .map((slot) => (
+                                  <div
+                                    key={slot.id}
+                                    className="p-4 hover:bg-muted/30 transition-colors"
+                                    data-testid={`row-slot-${slot.id}`}
+                                  >
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                      <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3">
+                                        <div>
+                                          <p className="text-xs text-muted-foreground mb-1">時刻・コース</p>
+                                          <p className="font-semibold">{slot.startTime}</p>
+                                          <p className="text-sm text-muted-foreground">{slot.courseLabel}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs text-muted-foreground mb-1">クラス帯</p>
+                                          <Badge variant="outline" className="text-sm">
+                                            {slot.classBand}
+                                          </Badge>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs text-muted-foreground mb-1">受入枠</p>
+                                          <p className="font-semibold">
+                                            {slot.capacityMakeupAllowed} 枠
+                                          </p>
+                                          <p className="text-xs text-muted-foreground">
+                                            使用済み: {slot.capacityMakeupUsed}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs text-muted-foreground mb-1">残り枠数</p>
+                                          <p className="text-lg font-bold text-primary">
+                                            {slot.capacityMakeupAllowed - slot.capacityMakeupUsed}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          onClick={() => {
+                                            setEditingSlotData(slot);
+                                            setShowSlotDialog(true);
+                                          }}
+                                          variant="outline"
+                                          size="sm"
+                                          data-testid={`button-edit-slot-${slot.id}`}
+                                        >
+                                          編集
+                                        </Button>
+                                        <Button
+                                          onClick={() => {
+                                            if (confirm(`${slot.courseLabel}の枠を削除しますか？`)) {
+                                              deleteSlotMutation.mutate(slot.id);
+                                            }
+                                          }}
+                                          variant="outline"
+                                          size="sm"
+                                          data-testid={`button-delete-slot-${slot.id}`}
+                                        >
+                                          削除
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 )}
               </CardContent>
