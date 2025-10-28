@@ -117,10 +117,14 @@ export default function AdminPage() {
 
   const createSlotMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/admin/create-slot", data),
-    onSuccess: () => {
+    onSuccess: (response: any) => {
+      const description = response.count 
+        ? `${response.count}個の枠を作成しました。`
+        : "新しい枠を作成しました。";
+      
       toast({
         title: "作成完了",
-        description: "新しい枠を作成しました。",
+        description,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/slots"] });
       setShowSlotDialog(false);
@@ -704,6 +708,8 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
         capacityLimit: z.number().min(0, "0以上の数値を入力してください"),
         capacityCurrent: z.number().min(0, "0以上の数値を入力してください"),
         capacityMakeupAllowed: z.number().min(0, "0以上の数値を入力してください"),
+        isRecurring: z.boolean().optional(),
+        recurringWeeks: z.number().min(1).max(52).optional(),
       })
     ),
     defaultValues: slot
@@ -715,6 +721,8 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
           capacityLimit: slot.capacityLimit,
           capacityCurrent: slot.capacityCurrent,
           capacityMakeupAllowed: slot.capacityMakeupAllowed,
+          isRecurring: false,
+          recurringWeeks: 12,
         }
       : {
           date: "",
@@ -724,6 +732,8 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
           capacityLimit: 10,
           capacityCurrent: 0,
           capacityMakeupAllowed: 2,
+          isRecurring: false,
+          recurringWeeks: 12,
         },
   });
 
@@ -867,6 +877,62 @@ function SlotDialog({ slot, open, onOpenChange, onSave }: SlotDialogProps) {
                 )}
               />
             </div>
+
+            {!slot && (
+              <div className="border-t pt-4 mt-2">
+                <FormField
+                  control={form.control}
+                  name="isRecurring"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                      <FormControl>
+                        <input
+                          type="checkbox"
+                          checked={field.value}
+                          onChange={field.onChange}
+                          className="mt-1"
+                          data-testid="checkbox-recurring"
+                        />
+                      </FormControl>
+                      <div className="space-y-1 leading-none">
+                        <FormLabel className="font-semibold">
+                          毎週繰り返し作成
+                        </FormLabel>
+                        <p className="text-sm text-muted-foreground">
+                          この枠を毎週同じ曜日・時間に自動作成します（休館日は除く）
+                        </p>
+                      </div>
+                    </FormItem>
+                  )}
+                />
+
+                {form.watch("isRecurring") && (
+                  <FormField
+                    control={form.control}
+                    name="recurringWeeks"
+                    render={({ field }) => (
+                      <FormItem className="mt-4">
+                        <FormLabel>作成する週数</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            type="number"
+                            min="1"
+                            max="52"
+                            onChange={(e) => field.onChange(parseInt(e.target.value))}
+                            data-testid="input-recurring-weeks"
+                          />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          {field.value}週間分の枠を作成します
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 pt-4">
               <Button

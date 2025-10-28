@@ -79,6 +79,8 @@ export const createSlotRequestSchema = z.object({
   capacityLimit: z.number().min(0),
   capacityCurrent: z.number().min(0),
   capacityMakeupAllowed: z.number().min(0),
+  isRecurring: z.boolean().optional(),
+  recurringWeeks: z.number().min(1).max(52).optional(),
 });
 
 export const updateSlotRequestSchema = z.object({
