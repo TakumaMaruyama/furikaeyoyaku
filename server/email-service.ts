@@ -235,3 +235,108 @@ export async function sendExpiredEmail(
     html: htmlContent,
   });
 }
+
+export async function sendAbsenceLoggedEmail(
+  toEmail: string,
+  childName: string,
+  courseLabel: string,
+  classBand: string,
+  lessonDate: string,
+  startTime: string,
+  resumeToken: string
+) {
+  const { client, fromEmail } = await getUncachableResendClient();
+  const resumeUrl = `${BASE_URL}/?token=${resumeToken}`;
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>欠席登録のご案内</title>
+  <style>
+    body {
+      font-family: "Noto Sans JP", sans-serif;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      padding: 32px;
+    }
+    .header {
+      border-bottom: 2px solid #0ea5e9;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .header h1 {
+      color: #0ea5e9;
+      margin: 0;
+      font-size: 22px;
+    }
+    .info-box {
+      background-color: #ecfeff;
+      border-left: 4px solid #0ea5e9;
+      padding: 16px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .button {
+      display: inline-block;
+      padding: 12px 24px;
+      border-radius: 999px;
+      background: #0ea5e9;
+      color: #fff !important;
+      text-decoration: none;
+      font-weight: 600;
+      margin-top: 12px;
+    }
+    .footer {
+      font-size: 13px;
+      color: #666;
+      text-align: center;
+      margin-top: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>欠席のご連絡を受け付けました</h1>
+    </div>
+    <p>保護者様</p>
+    <p>
+      いつもお子さまのレッスンにご参加いただきありがとうございます。<br/>
+      <strong>${childName}</strong> さんの欠席登録を受け付けました。以下のリンクから振替の手続きを進められます。
+    </p>
+    <div class="info-box">
+      <p><strong>欠席クラス：</strong>${courseLabel} / ${classBand}</p>
+      <p><strong>欠席日：</strong>${lessonDate} ${startTime}</p>
+    </div>
+    <p style="text-align:center;">
+      <a class="button" href="${resumeUrl}">振替手続きを開く</a>
+    </p>
+    <p>リンクは他の端末からでも開けます。振替期限内（欠席日の前後1か月）にお手続きをお願いいたします。</p>
+    <div class="footer">
+      <p>このメールは自動送信されています。</p>
+      <p>水泳教室 振替予約システム</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+
+  await client.emails.send({
+    from: fromEmail,
+    to: toEmail,
+    subject: `[欠席登録完了] ${lessonDate} ${courseLabel}`,
+    html: htmlContent,
+  });
+}

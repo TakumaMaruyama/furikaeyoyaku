@@ -103,6 +103,7 @@ export default function ParentPage() {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [isEditingAbsence, setIsEditingAbsence] = useState(false);
   const [isCheckingAbsence, setIsCheckingAbsence] = useState(true);
+  const [isCancellingAbsence, setIsCancellingAbsence] = useState(false);
 
   const absenceForm = useForm<AbsenceFormValues>({
     resolver: zodResolver(absenceFormSchema),
@@ -362,7 +363,7 @@ export default function ParentPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/search-slots"] });
   };
 
-  const handleResetAbsence = () => {
+  const clearAbsenceState = useCallback(() => {
     localStorage.removeItem(ABSENCE_STORAGE_KEY);
     setAbsence(null);
     setSearchParams(null);
@@ -383,10 +384,40 @@ export default function ParentPage() {
       absentDateISO: "",
       absenceToken: "",
     });
-    toast({
-      title: "欠席情報をリセットしました",
-      description: "新しい欠席連絡から始められます。",
-    });
+  }, [absenceForm, searchForm]);
+
+  const handleCancelAbsence = async () => {
+    if (!absence) return;
+    if (absence.makeupStatus === "MAKEUP_CONFIRMED") {
+      toast({
+        title: "キャンセルできません",
+        description: "すでに振替が確定しています。変更は教室までご連絡ください。",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!window.confirm("欠席と振替の手続きをキャンセルしますか？")) {
+      return;
+    }
+
+    setIsCancellingAbsence(true);
+    try {
+    await apiRequest("POST", `/api/absences/${absence.resumeToken}/cancel`);
+      clearAbsenceState();
+      toast({
+        title: "手続きをキャンセルしました",
+        description: "再度必要になった場合は改めて欠席登録を行ってください。",
+      });
+    } catch (error: any) {
+      toast({
+        title: "キャンセルに失敗しました",
+        description: error.message ?? "時間をおいてから再度お試しください。",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCancellingAbsence(false);
+    }
   };
 
   const absenceDeadline = useMemo(() => {
@@ -613,8 +644,19 @@ export default function ParentPage() {
                       >
                         欠席内容を編集
                       </Button>
-                      <Button type="button" variant="outline" onClick={handleResetAbsence} className="border-2">
-                        リセット
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleCancelAbsence}
+                        className="border-2"
+                        disabled={isCancellingAbsence || absence.makeupStatus === "MAKEUP_CONFIRMED"}
+                        title={
+                          absence.makeupStatus === "MAKEUP_CONFIRMED"
+                            ? "振替が確定済みのため、教室までご連絡ください。"
+                            : undefined
+                        }
+                      >
+                        {isCancellingAbsence ? "キャンセル中..." : "手続きをキャンセル"}
                       </Button>
                     </div>
                   </div>

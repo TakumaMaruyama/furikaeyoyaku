@@ -16,7 +16,7 @@ import {
   createAbsenceNoticeSchema,
 } from "@shared/schema";
 import type { AbsenceStatus } from "@shared/schema";
-import { sendConfirmationEmail, sendExpiredEmail } from "./email-service";
+import { sendAbsenceLoggedEmail, sendConfirmationEmail, sendExpiredEmail } from "./email-service";
 import { createId } from "@paralleldrive/cuid2";
 import { startScheduler } from "./scheduler";
 import { addDays, format, isAfter } from "date-fns";
@@ -104,6 +104,7 @@ function mapAbsenceToResponse(absence: AbsenceWithRelations) {
       startTime: absence.originalSlot.startTime,
       courseLabel: absence.originalSlot.courseLabel,
       classBand: absence.originalSlot.classBand,
+      lessonStartDateTime: absence.originalSlot.lessonStartDateTime.toISOString(),
     },
     makeupSlotId: absence.makeupSlotId ?? null,
   };
@@ -126,6 +127,23 @@ function mapAbsenceToAdminResponse(absence: AbsenceWithRelations) {
         }
       : null,
   };
+}
+
+async function notifyAbsenceLogged(absence: AbsenceWithRelations) {
+  if (!absence.contactEmail) return;
+  try {
+    await sendAbsenceLoggedEmail(
+      absence.contactEmail,
+      absence.childName,
+      absence.originalSlot.courseLabel,
+      absence.originalSlot.classBand,
+      absence.originalSlot.date.toLocaleDateString("ja-JP"),
+      absence.originalSlot.startTime,
+      absence.resumeToken
+    );
+  } catch (error) {
+    console.error("[Absence] 欠席登録メール送信に失敗しました:", error);
+  }
 }
 
 async function findActiveRequest(absenceId: string) {
@@ -203,6 +221,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         });
 
+        await notifyAbsenceLogged(updated);
+
         return res.json({
           success: true,
           absence: mapAbsenceToResponse(updated),
@@ -249,6 +269,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           makeupSlot: true,
         },
       });
+
+      await notifyAbsenceLogged(absenceWithSlot);
 
       if (adjustmentDelta > 0) {
         try {
@@ -300,6 +322,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(error.status).json({ error: error.message });
       }
       res.status(400).json({ error: error.message ?? "欠席情報の取得に失敗しました。" });
+    }
+  });
+
+  app.post("/api/absences/:token/cancel", async (req, res) => {
+    try {
+      const token = req.params.token;
+      if (!token) {
+        throw new HttpError(400, "token が必要です。");
+      }
+
+      const absence = await loadAbsenceByToken(token);
+
+      if (absence.makeupStatus === ABSENCE_STATUS.CANCELLED) {
+        return res.json({ success: true, status: ABSENCE_STATUS.CANCELLED });
+      }
+
+      if (absence.makeupStatus === ABSENCE_STATUS.MAKEUP_CONFIRMED) {
+        throw new HttpError(409, "すでに振替が確定しています。キャンセルする場合は教室までご連絡ください。");
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const waitingRequests = await tx.request.findMany({
+          where: {
+            absenceNoticeId: absence.id,
+            status: "待ち",
+          },
+        });
+
+        if (waitingRequests.length > 0) {
+          const slotIds = Array.from(new Set(waitingRequests.map((request) => request.toSlotId)));
+
+          await tx.request.deleteMany({
+            where: { id: { in: waitingRequests.map((request) => request.id) } },
+          });
+
+          for (const slotId of slotIds) {
+            const remaining = await tx.request.count({
+              where: {
+                toSlotId: slotId,
+                status: "待ち",
+              },
+            });
+
+            await tx.classSlot.update({
+              where: { id: slotId },
+              data: {
+                waitlistCount: remaining,
+              },
+            });
+          }
+        }
+
+        if (absence.makeupAllowanceDelta > 0) {
+          await tx.classSlot.update({
+            where: { id: absence.originalSlotId },
+            data: {
+              capacityCurrent: { increment: absence.makeupAllowanceDelta },
+              capacityMakeupAllowed: { decrement: absence.makeupAllowanceDelta },
+            },
+          });
+        }
+
+        await tx.absenceNotice.update({
+          where: { id: absence.id },
+          data: {
+            makeupStatus: ABSENCE_STATUS.CANCELLED,
+            makeupSlotId: null,
+          },
+        });
+      });
+
+      res.json({ success: true, status: ABSENCE_STATUS.CANCELLED });
+    } catch (error: any) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      res.status(400).json({ error: error.message ?? "欠席のキャンセルに失敗しました。" });
     }
   });
 
