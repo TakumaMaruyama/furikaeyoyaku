@@ -112,6 +112,7 @@ export const resumeAbsenceResponseSchema = z.object({
     startTime: z.string(),
     courseLabel: z.string(),
     classBand: classBandEnum,
+    lessonStartDateTime: z.string(),
   }),
 });
 

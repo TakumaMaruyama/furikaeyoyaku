@@ -250,6 +250,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
 
+      if (adjustmentDelta > 0) {
+        try {
+          await confirmNextWaiter(originalSlot.id);
+        } catch (error) {
+          console.error("[Absence] 待ちリスト案内に失敗しました:", error);
+        }
+      }
+
       res.json({
         success: true,
         absence: mapAbsenceToResponse(absenceWithSlot),

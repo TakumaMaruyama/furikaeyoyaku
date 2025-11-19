@@ -6,39 +6,44 @@ const ACTIVE_ABSENCE_STATUSES = ["ABSENT_LOGGED", "WAITING", "CANCELLED"];
 
 export function startScheduler() {
   cron.schedule("*/10 * * * *", async () => {
-    console.log("[Scheduler] レッスン開始1時間前の自動クローズをチェック中...");
+    console.log("[Scheduler] レッスン開始1時間前の待機クローズをチェック中...");
 
     const now = new Date();
     const oneHourFromNow = new Date(now);
     oneHourFromNow.setHours(oneHourFromNow.getHours() + 1);
 
-    const slotsToClose = await prisma.classSlot.findMany({
+    const expiringRequests = await prisma.request.findMany({
       where: {
-        lessonStartDateTime: {
+        status: "待ち",
+        toSlotStartDateTime: {
           lte: oneHourFromNow,
           gte: now,
-        },
-        waitlistCount: {
-          gt: 0,
         },
       },
     });
 
-    for (const slot of slotsToClose) {
-      const oneHourBefore = new Date(slot.lessonStartDateTime);
-      oneHourBefore.setHours(oneHourBefore.getHours() - 1);
+    if (expiringRequests.length > 0) {
+      const requestsBySlot: Record<string, typeof expiringRequests> = {};
+      for (const request of expiringRequests) {
+        if (!requestsBySlot[request.toSlotId]) {
+          requestsBySlot[request.toSlotId] = [];
+        }
+        requestsBySlot[request.toSlotId].push(request);
+      }
 
-      if (now >= oneHourBefore) {
-        console.log(`[Scheduler] 枠 ${slot.id} をクローズ中...`);
+      const slotIds = Object.keys(requestsBySlot);
+      const slots = await prisma.classSlot.findMany({
+        where: { id: { in: slotIds } },
+      });
+      const slotMap = new Map(slots.map((slot) => [slot.id, slot]));
 
-        const waitingRequests = await prisma.request.findMany({
-          where: {
-            toSlotId: slot.id,
-            status: "待ち",
-          },
-        });
+      for (const [slotId, requests] of Object.entries(requestsBySlot)) {
+        const slot = slotMap.get(slotId);
+        if (!slot) continue;
 
-        for (const request of waitingRequests) {
+        console.log(`[Scheduler] 枠 ${slotId} をクローズ...`);
+
+        for (const request of requests) {
           await prisma.request.update({
             where: { id: request.id },
             data: { status: "期限切れ" },
@@ -77,19 +82,26 @@ export function startScheduler() {
           }
         }
 
+        const remainingWaiters = await prisma.request.count({
+          where: {
+            toSlotId: slotId,
+            status: "待ち",
+          },
+        });
+
         await prisma.classSlot.update({
-          where: { id: slot.id },
+          where: { id: slotId },
           data: {
-            waitlistCount: 0,
+            waitlistCount: remainingWaiters,
             lastNotifiedRequestId: null,
           },
         });
 
-        console.log(`[Scheduler] 枠 ${slot.id} をクローズしました（${waitingRequests.length}件）`);
+        console.log(`[Scheduler] 枠 ${slotId} をクローズしました（${requests.length}名）`);
       }
     }
 
-    console.log("[Scheduler] 欠席の振替期限をチェック中...");
+    console.log("[Scheduler] 欠席の期限切れチェック...");
     const expiredAbsences = await prisma.absenceNotice.findMany({
       where: {
         makeupDeadline: { lt: now },
@@ -112,5 +124,5 @@ export function startScheduler() {
     }
   });
 
-  console.log("✅ スケジューラを起動しました（10分ごとに自動クローズをチェック）");
+  console.log("✅ スケジューラーを起動しました（10分おきに待機クローズをチェック）");
 }
