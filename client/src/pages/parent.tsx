@@ -99,7 +99,7 @@ export default function ParentPage() {
   const [waitlistSlot, setWaitlistSlot] = useState<SlotSearchResult | null>(null);
   const [classSlotOptions, setClassSlotOptions] = useState<ClassSlotOption[]>([]);
   const [isFetchingSlots, setIsFetchingSlots] = useState(false);
-  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("calendar");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [isEditingAbsence, setIsEditingAbsence] = useState(false);
   const [isCheckingAbsence, setIsCheckingAbsence] = useState(true);
@@ -272,9 +272,50 @@ export default function ParentPage() {
   }
 
   const absenceStatusMeta = absence ? ABSENCE_STATUS_META[absence.makeupStatus] : null;
-  const canSearch =
+  const canSearch = Boolean(
     absence &&
-    (absence.makeupStatus === "ABSENT_LOGGED" || absence.makeupStatus === "WAITING" || absence.makeupStatus === "CANCELLED");
+      (absence.makeupStatus === "ABSENT_LOGGED" ||
+        absence.makeupStatus === "WAITING" ||
+        absence.makeupStatus === "CANCELLED"),
+  );
+
+  useEffect(() => {
+    if (!absence) {
+      searchForm.reset({
+        childName: "",
+        declaredClassBand: undefined as unknown as ClassBand,
+        absentDateISO: "",
+        absenceToken: "",
+      });
+      setSearchParams(null);
+      return;
+    }
+
+    const nextParams: SearchSlotsRequest = {
+      childName: absence.childName,
+      declaredClassBand: absence.declaredClassBand,
+      absentDateISO: absence.absentDateISO,
+      absenceToken: absence.resumeToken,
+    };
+
+    searchForm.reset(nextParams);
+
+    if (!canSearch) {
+      setSearchParams(null);
+      return;
+    }
+
+    const hasChanged =
+      !searchParams ||
+      searchParams.childName !== nextParams.childName ||
+      searchParams.declaredClassBand !== nextParams.declaredClassBand ||
+      searchParams.absentDateISO !== nextParams.absentDateISO ||
+      searchParams.absenceToken !== nextParams.absenceToken;
+
+    if (hasChanged) {
+      setSearchParams(nextParams);
+    }
+  }, [absence, canSearch, searchForm, searchParams]);
 
   const onSubmitAbsence = async (values: AbsenceFormValues) => {
     const payload: CreateAbsenceNoticeRequest = {
@@ -304,28 +345,6 @@ export default function ParentPage() {
         variant: "destructive",
       });
     }
-  };
-
-  const onSearch = (_data: SearchSlotsRequest) => {
-    if (!absence) {
-      toast({
-        title: "欠席連絡を先に登録してください",
-        description: "欠席連絡を済ませると振替枠を検索できます。",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const params: SearchSlotsRequest = {
-      childName: absence.childName,
-      declaredClassBand: absence.declaredClassBand,
-      absentDateISO: absence.absentDateISO,
-      absenceToken: absence.resumeToken,
-    };
-
-    setSearchParams(params);
-    setSelectedDate(new Date(absence.absentDateISO));
-    setViewMode("list");
   };
 
   const handleBook = async (slotId: string) => {
@@ -370,6 +389,7 @@ export default function ParentPage() {
     setClassSlotOptions([]);
     setWaitlistSlot(null);
     setSelectedDate(undefined);
+    setViewMode("calendar");
     setIsEditingAbsence(false);
     absenceForm.reset({
       childName: "",
@@ -391,23 +411,23 @@ export default function ParentPage() {
     if (absence.makeupStatus === "MAKEUP_CONFIRMED") {
       toast({
         title: "キャンセルできません",
-        description: "すでに振替が確定しています。変更は教室までご連絡ください。",
+        description: "すでに振替が確定しています。変更は教室まで直接ご連絡ください。",
         variant: "destructive",
       });
       return;
     }
 
-    if (!window.confirm("欠席と振替の手続きをキャンセルしますか？")) {
+    if (!window.confirm("欠席登録と振替手続きをすべてキャンセルしますか？")) {
       return;
     }
 
     setIsCancellingAbsence(true);
     try {
-    await apiRequest("POST", `/api/absences/${absence.resumeToken}/cancel`);
+      await apiRequest("POST", `/api/absences/${absence.resumeToken}/cancel`);
       clearAbsenceState();
       toast({
-        title: "手続きをキャンセルしました",
-        description: "再度必要になった場合は改めて欠席登録を行ってください。",
+        title: "欠席登録をキャンセルしました",
+        description: "必要になった場合は改めて欠席登録からやり直してください。",
       });
     } catch (error: any) {
       toast({
@@ -420,6 +440,22 @@ export default function ParentPage() {
     }
   };
 
+  const handleOpenWaitlist = useCallback(
+    (slot: SlotSearchResult) => {
+      if (!absence) return;
+      if (absence.makeupStatus === "WAITING") {
+        toast({
+          title: "順番待ちは1枠のみです",
+          description: "別の枠で順番待ち登録済みです。キャンセルすると再度登録できます。",
+          variant: "destructive",
+        });
+        return;
+      }
+      setWaitlistSlot(slot);
+    },
+    [absence, toast, setWaitlistSlot],
+  );
+
   const absenceDeadline = useMemo(() => {
     if (!absence) return null;
     return format(new Date(absence.makeupDeadlineISO), "yyyy年M月d日(E)", { locale: ja });
@@ -430,7 +466,10 @@ export default function ParentPage() {
     return format(new Date(absence.absentDateISO), "yyyy年M月d日(E)", { locale: ja });
   }, [absence]);
 
-  const displayedSlots = slots ?? [];
+  const displayedSlots = searchParams ? slots ?? [] : [];
+  const waitlistDisabled = absence?.makeupStatus === "WAITING";
+  const waitlistDisabledMessage =
+    "すでに別の枠で順番待ち登録済みです。キャンセルすると再度登録できます。";
 
   if (isCheckingAbsence) {
     return (
@@ -652,11 +691,11 @@ export default function ParentPage() {
                         disabled={isCancellingAbsence || absence.makeupStatus === "MAKEUP_CONFIRMED"}
                         title={
                           absence.makeupStatus === "MAKEUP_CONFIRMED"
-                            ? "振替が確定済みのため、教室までご連絡ください。"
+                            ? "振替が確定済みのため、教室まで直接ご連絡ください。"
                             : undefined
                         }
                       >
-                        {isCancellingAbsence ? "キャンセル中..." : "手続きをキャンセル"}
+                        {isCancellingAbsence ? "キャンセル処理中..." : "欠席登録をキャンセル"}
                       </Button>
                     </div>
                   </div>
@@ -702,14 +741,14 @@ export default function ParentPage() {
             <Card className="border-2">
               <CardContent className="p-6">
                 <Form {...searchForm}>
-                  <form onSubmit={searchForm.handleSubmit(onSearch)} className="space-y-4">
+                  <div className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-3">
                       <FormField
                         control={searchForm.control}
                         name="childName"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="font-semibold">お子様の名前</FormLabel>
+                            <FormLabel className="font-semibold">お子さまの名前</FormLabel>
                             <FormControl>
                               <Input {...field} readOnly className="h-12 border-2 bg-muted" />
                             </FormControl>
@@ -742,17 +781,10 @@ export default function ParentPage() {
                       />
                     </div>
 
-                    <Input type="hidden" {...searchForm.register("absenceToken")} />
-
-                    <Button
-                      type="submit"
-                      data-testid="button-search"
-                      className="w-full h-12 text-base font-semibold"
-                      disabled={isSearching}
-                    >
-                      {isSearching ? "検索中..." : "検索"}
-                    </Button>
-                  </form>
+                    <p className="text-sm text-muted-foreground">
+                      欠席情報をもとに振替候補を自動で検索しています。条件を変更する場合は欠席情報を編集してください。
+                    </p>
+                  </div>
                 </Form>
               </CardContent>
             </Card>
@@ -864,7 +896,11 @@ export default function ParentPage() {
                                           key={slot.slotId}
                                           slot={slot}
                                           onBook={handleBook}
-                                          onWaitlist={setWaitlistSlot}
+                                          onWaitlist={handleOpenWaitlist}
+                                          waitlistDisabled={waitlistDisabled}
+                                          waitlistDisabledReason={
+                                            waitlistDisabled ? waitlistDisabledMessage : undefined
+                                          }
                                         />
                                       ))}
                                   </div>
@@ -879,7 +915,14 @@ export default function ParentPage() {
                     ) : (
                       <div className="space-y-4">
                         {displayedSlots.map((slot) => (
-                          <SlotCard key={slot.slotId} slot={slot} onBook={handleBook} onWaitlist={setWaitlistSlot} />
+                          <SlotCard
+                            key={slot.slotId}
+                            slot={slot}
+                            onBook={handleBook}
+                            onWaitlist={handleOpenWaitlist}
+                            waitlistDisabled={waitlistDisabled}
+                            waitlistDisabledReason={waitlistDisabled ? waitlistDisabledMessage : undefined}
+                          />
                         ))}
                       </div>
                     )}
@@ -921,9 +964,11 @@ type SlotCardProps = {
   slot: SlotSearchResult;
   onBook: (slotId: string) => void;
   onWaitlist: (slot: SlotSearchResult) => void;
+  waitlistDisabled?: boolean;
+  waitlistDisabledReason?: string;
 };
 
-function SlotCard({ slot, onBook, onWaitlist }: SlotCardProps) {
+function SlotCard({ slot, onBook, onWaitlist, waitlistDisabled, waitlistDisabledReason }: SlotCardProps) {
   return (
     <Card className="border-2 hover:border-primary/50 transition-all" data-testid={`slot-card-${slot.slotId}`}>
       <CardHeader className="p-4 pb-3">
@@ -985,17 +1030,23 @@ function SlotCard({ slot, onBook, onWaitlist }: SlotCardProps) {
         {slot.statusCode === "〇" || slot.statusCode === "△" ? (
           <Button onClick={() => onBook(slot.slotId)} className="w-full h-11" data-testid={`button-book-${slot.slotId}`}>
             <CheckCircleIcon className="w-4 h-4 mr-2" />
-            この枠で振替予約
+            この枠で振替
           </Button>
         ) : (
           <Button
-            onClick={() => onWaitlist(slot)}
+            onClick={() => {
+              if (!waitlistDisabled) {
+                onWaitlist(slot);
+              }
+            }}
             variant="outline"
             className="w-full h-11"
             data-testid={`button-waitlist-${slot.slotId}`}
+            disabled={waitlistDisabled}
+            title={waitlistDisabled ? waitlistDisabledReason : undefined}
           >
             <AlertTriangleIcon className="w-4 h-4 mr-2" />
-            キャンセル待ちに登録
+            順番待ちに登録
           </Button>
         )}
       </CardFooter>
